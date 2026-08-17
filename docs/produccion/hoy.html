@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Hoy — Antojito's Cakes</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  body { padding-bottom: 40px; }
+  .plan-card { background:#fff; border-radius:var(--radius); box-shadow:var(--shadow); padding:16px 18px; margin-bottom:16px; }
+  .plan-card-titulo { font-family:'Bodoni Moda',serif; font-size:18px; font-weight:700; color:var(--dark); }
+  .item-hoy {
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:12px 0; border-bottom:1px solid #F5E3EF;
+  }
+  .item-hoy:last-child { border-bottom:none; }
+  .item-hoy-nombre { font-weight:600; font-size:15px; }
+  .item-hoy-meta { font-size:12px; color:var(--gray); margin-top:2px; }
+  .item-hoy-cant { font-family:'Bodoni Moda',serif; font-size:22px; font-weight:700; color:var(--pink-dark); text-align:right; }
+  .item-hoy-cant .label { font-size:10px; color:var(--gray); text-transform:uppercase; font-weight:600; display:block; }
+  .refresh-btn { position:fixed; bottom:18px; right:18px; box-shadow:0 6px 20px rgba(0,0,0,.25); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Hoy</div>
+  <div class="header-sub" id="fechaHoy"></div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <a href="../home.html" class="btn btn-outline btn-sm">Ver todo el sistema</a>
+  <div id="contenido" class="mt-16"><div class="loading-state">Cargando plan del día...</div></div>
+</div>
+
+<button class="btn btn-primary refresh-btn" id="btnRefrescar" title="Actualizar">⟳</button>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+document.getElementById('fechaHoy').textContent =
+  new Date().toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' });
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  if (ctx.perfil.rol === 'trabajador' && ctx.perfil.sede === 'Orinokia') {
+    document.getElementById('contenido').innerHTML = '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+  await cargarHoy();
+}
+
+async function cargarHoy() {
+  const cont = document.getElementById('contenido');
+  cont.innerHTML = '<div class="loading-state">Cargando plan del día...</div>';
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const { data: planes, error } = await supabaseClient
+    .from('planes_produccion')
+    .select('id, nombre, estado, plan_items(id, receta_id, cantidad_planificada, cantidad_producida, sede, cargado_a_inventario, recetas(nombre))')
+    .eq('fecha_planificada', hoy)
+    .neq('estado', 'cancelado');
+
+  if (error) {
+    cont.innerHTML = `<div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  if (!planes.length) {
+    cont.innerHTML = `<div class="empty-state">No hay ningún plan de producción para hoy.</div>`;
+    return;
+  }
+
+  // Stock ya en inventario, para mostrar "a producir" igual que en el detalle del plan
+  const recetaIds = [...new Set(planes.flatMap(p => (p.plan_items || []).map(i => i.receta_id)))];
+  let stockProducto = {};
+  if (recetaIds.length) {
+    const { data: lotes } = await supabaseClient
+      .from('lotes').select('receta_id, sede, cantidad')
+      .in('receta_id', recetaIds).is('retirado_at', null);
+    for (const l of lotes || []) {
+      const clave = `${l.receta_id}|${l.sede}`;
+      stockProducto[clave] = (stockProducto[clave] || 0) + l.cantidad;
+    }
+  }
+
+  cont.innerHTML = planes.map(p => {
+    const items = p.plan_items || [];
+    if (!items.length) {
+      return `<div class="plan-card"><div class="plan-card-titulo">${escapeHtml(p.nombre)}</div>
+        <div class="hint mt-8">Sin recetas agregadas todavía.</div></div>`;
+    }
+    const filas = items.map(it => {
+      const enInventario = stockProducto[`${it.receta_id}|${it.sede}`] || 0;
+      const aProducir = Math.max(it.cantidad_planificada - enInventario, 0);
+      return `
+      <div class="item-hoy">
+        <div>
+          <div class="item-hoy-nombre">${escapeHtml(it.recetas?.nombre || '—')}</div>
+          <div class="item-hoy-meta">${it.sede === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}
+            ${it.cargado_a_inventario ? ' · <span style="color:var(--green);">cargado ✓</span>' : ''}</div>
+        </div>
+        <div class="item-hoy-cant">
+          <span class="label">a producir</span>
+          ${aProducir}
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="plan-card">
+      <div class="flex-between">
+        <div class="plan-card-titulo">${escapeHtml(p.nombre)}</div>
+        <a class="btn btn-outline btn-sm" href="plan.html?id=${p.id}">Abrir</a>
+      </div>
+      ${filas}
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('btnRefrescar').addEventListener('click', cargarHoy);
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

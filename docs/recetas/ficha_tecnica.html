@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ficha Técnica — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  .ficha { max-width:700px; margin:0 auto; }
+  .ficha-header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid var(--pink-light); padding-bottom:16px; margin-bottom:16px; }
+  .ficha-nombre { font-family:'Bodoni Moda',serif; font-size:24px; font-weight:700; color:var(--dark); }
+  .ficha-meta { font-size:13px; color:var(--gray); margin-top:4px; }
+  .ficha-costo { text-align:right; }
+  .ficha-costo .label { font-size:11px; color:var(--gray); text-transform:uppercase; letter-spacing:.05em; }
+  .ficha-costo .valor { font-family:'Bodoni Moda',serif; font-size:26px; font-weight:700; color:var(--pink-dark); }
+  .seccion-receta { margin-bottom:18px; }
+  .seccion-titulo {
+    font-family:'Bodoni Moda',serif; font-size:14px; font-weight:700; color:var(--pink-dark);
+    background:var(--pink-pale); padding:8px 12px; border-radius:10px 10px 0 0;
+  }
+  .seccion-receta table { width:100%; border-collapse:collapse; font-size:13px; border:1px solid var(--pink-light); border-top:none; border-radius:0 0 10px 10px; overflow:hidden; }
+  .seccion-receta th, .seccion-receta td { padding:8px 12px; text-align:left; border-bottom:1px solid #F5E3EF; }
+  .seccion-receta th { font-size:11px; text-transform:uppercase; color:var(--gray); font-weight:600; }
+  .seccion-receta tr:last-child td { border-bottom:none; }
+  .no-print { }
+  @media print {
+    .header, .no-print { display:none !important; }
+    body { background:#fff; padding:0; }
+    .panel { box-shadow:none; }
+  }
+</style>
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Ficha Técnica</div>
+  <div class="header-sub">Antojito's Cakes</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <div class="flex-between no-print">
+    <a href="index.html" class="btn btn-outline btn-sm">← Recetas</a>
+    <button class="btn btn-primary btn-sm" id="btnImprimir" onclick="window.print()">🖨 Imprimir / Guardar PDF</button>
+  </div>
+
+  <div class="panel mt-16 ficha" id="fichaContenido">
+    <div class="loading-state">Cargando receta...</div>
+  </div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const CATEGORIA_LABEL = { racion: 'Ración', torta_entera: 'Torta Entera', bebida: 'Bebida' };
+const params = new URLSearchParams(location.search);
+const RECETA_ID = params.get('id');
+let VER_DINERO = true;
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  if (ctx.perfil.rol === 'trabajador' && ctx.perfil.sede === 'Orinokia') {
+    document.getElementById('fichaContenido').innerHTML = '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+  VER_DINERO = ctx.perfil.rol !== 'trabajador';
+  document.getElementById('btnImprimir').style.display = VER_DINERO ? '' : 'none';
+
+  if (!RECETA_ID) {
+    document.getElementById('fichaContenido').innerHTML = '<div class="empty-state">Falta el id de la receta.</div>';
+    return;
+  }
+
+  const { data: receta, error } = await supabaseClient.from('recetas').select('*').eq('id', RECETA_ID).single();
+  if (error || !receta) {
+    document.getElementById('fichaContenido').innerHTML = '<div class="empty-state">No se encontró la receta.</div>';
+    return;
+  }
+
+  const { data: detalle } = await supabaseClient
+    .from('detalle_receta')
+    .select('cantidad, seccion, es_empaque, ingredientes ( nombre, unidad_medida, costo_unitario )')
+    .eq('receta_id', RECETA_ID);
+
+  renderFicha(receta, detalle || []);
+}
+
+function renderFicha(receta, detalle) {
+  // Agrupa por sub-preparación (seccion) en vez de una lista plana, para que se
+  // vea igual que el Excel original: Bizcocho, Crema Pastelera, Decorado, etc.
+  const grupos = new Map();
+  for (const d of detalle) {
+    const sec = d.seccion || 'General';
+    if (!grupos.has(sec)) grupos.set(sec, []);
+    grupos.get(sec).push(d);
+  }
+
+  const secciones = [...grupos.entries()].map(([seccion, items]) => {
+    const subtotal = items.reduce((s, d) => s + d.cantidad * d.ingredientes.costo_unitario, 0);
+    const filas = items.map(d => `
+      <tr>
+        <td class="wrap">${escapeHtml(d.ingredientes.nombre)}${d.es_empaque ? ' <span class="hint">(empaque)</span>' : ''}</td>
+        <td>${d.cantidad} ${escapeHtml(d.ingredientes.unidad_medida)}</td>
+        ${VER_DINERO ? `<td>$${(d.cantidad * d.ingredientes.costo_unitario).toFixed(2)}</td>` : ''}
+      </tr>
+    `).join('');
+    return `
+      <div class="seccion-receta">
+        <div class="seccion-titulo">${escapeHtml(seccion)}${VER_DINERO ? ` <span class="hint">— subtotal $${subtotal.toFixed(2)}</span>` : ''}</div>
+        <table>
+          <thead><tr><th>Ingrediente</th><th>Cantidad</th>${VER_DINERO ? '<th>Costo</th>' : ''}</tr></thead>
+          <tbody>${filas}</tbody>
+        </table>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('fichaContenido').innerHTML = `
+    <div class="ficha-header">
+      <div>
+        <div class="ficha-nombre">${escapeHtml(receta.nombre)}</div>
+        <div class="ficha-meta">${CATEGORIA_LABEL[receta.categoria] || receta.categoria} · ${receta.porciones} porción(es)</div>
+      </div>
+      ${VER_DINERO ? `<div class="ficha-costo">
+        <div class="label">Costo base</div>
+        <div class="valor">$${Number(receta.costo_base).toFixed(2)}</div>
+      </div>` : ''}
+    </div>
+    ${receta.descripcion ? `<p class="hint" style="margin-bottom:16px;">${escapeHtml(receta.descripcion)}</p>` : ''}
+    ${secciones || '<div class="empty-state">Sin ingredientes registrados.</div>'}
+  `;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

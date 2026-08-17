@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Receta — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  .ing-row { display:flex; gap:8px; align-items:flex-end; margin-bottom:10px; }
+  .ing-row .field { margin-bottom:0; flex:1; }
+  .ing-row .field.cantidad { max-width:140px; }
+  .ing-row .btn-quitar { flex-shrink:0; height:44px; }
+  .costo-preview { background:var(--pink-pale); border-radius:12px; padding:14px 18px; margin-top:16px; }
+  .costo-preview .valor { font-family:'Bodoni Moda',serif; font-size:24px; font-weight:700; color:var(--pink-dark); }
+</style>
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title" id="tituloPagina">Nueva Receta</div>
+  <div class="header-sub">Ficha Técnica</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <a href="index.html" class="btn btn-outline btn-sm">← Recetas</a>
+
+  <div class="panel mt-16">
+    <form id="formReceta">
+      <input type="hidden" id="recetaId">
+
+      <div class="field-row">
+        <div class="field">
+          <label>Nombre de la receta</label>
+          <input type="text" id="nombre" required>
+        </div>
+        <div class="field">
+          <label>Categoría</label>
+          <select id="categoria" required>
+            <option value="racion">Ración</option>
+            <option value="torta_entera">Torta Entera</option>
+            <option value="bebida">Bebida</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:120px;">
+          <label>Porciones</label>
+          <input type="number" id="porciones" min="1" value="1" required>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Descripción (opcional)</label>
+        <textarea id="descripcion" rows="2"></textarea>
+      </div>
+
+      <div class="section-title" style="font-size:16px; padding:16px 0 10px;">Ingredientes</div>
+      <div id="ingredientesWrap"></div>
+      <button type="button" class="btn btn-secondary btn-sm" id="btnAgregarIng">+ Agregar ingrediente</button>
+      <div class="error-text" id="errorIngredientes">Agrega al menos un ingrediente con cantidad mayor a 0.</div>
+
+      <div class="costo-preview">
+        <div class="hint">Costo base estimado (solo materia prima directa)</div>
+        <div class="valor" id="costoPreview">$0.00</div>
+        <div class="hint">El valor definitivo lo calcula el sistema al guardar.</div>
+      </div>
+
+      <div class="error-text" id="errorGeneral"></div>
+
+      <div class="flex gap-8 mt-24">
+        <button type="submit" class="btn btn-primary" id="btnGuardar">Guardar Receta</button>
+        <a href="index.html" class="btn btn-outline">Cancelar</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const RECETA_ID = params.get('id');
+let INGREDIENTES_DISPONIBLES = [];
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+
+  if (!tieneRol(ctx.perfil, ['administrador', 'produccion'])) {
+    document.querySelector('.panel').innerHTML = '<div class="empty-state">No tienes permiso para crear o editar recetas.</div>';
+    return;
+  }
+
+  await cargarIngredientesDisponibles();
+
+  if (RECETA_ID) {
+    document.getElementById('tituloPagina').textContent = 'Editar Receta';
+    await cargarReceta(RECETA_ID);
+  } else {
+    agregarFilaIngrediente();
+  }
+}
+
+async function cargarIngredientesDisponibles() {
+  const { data, error } = await supabaseClient
+    .from('ingredientes')
+    .select('id, nombre, unidad_medida, costo_unitario')
+    .eq('activo', true)
+    .order('nombre');
+  if (error) {
+    toast('No se pudieron cargar los ingredientes', 'error');
+    return;
+  }
+  INGREDIENTES_DISPONIBLES = data;
+}
+
+function opcionesIngredientes(seleccionadoId) {
+  return INGREDIENTES_DISPONIBLES.map(ing =>
+    `<option value="${ing.id}" ${ing.id === seleccionadoId ? 'selected' : ''}>${escapeHtml(ing.nombre)} (${ing.unidad_medida})</option>`
+  ).join('');
+}
+
+function agregarFilaIngrediente(ingredienteId = '', cantidad = '') {
+  const wrap = document.getElementById('ingredientesWrap');
+  const row = document.createElement('div');
+  row.className = 'ing-row';
+  row.innerHTML = `
+    <div class="field">
+      <label>Ingrediente</label>
+      <select class="ing-select">${opcionesIngredientes(ingredienteId)}</select>
+    </div>
+    <div class="field cantidad">
+      <label>Cantidad</label>
+      <input type="number" class="ing-cantidad" min="0.0001" step="0.0001" value="${cantidad}">
+    </div>
+    <button type="button" class="btn btn-danger btn-sm btn-quitar">Quitar</button>
+  `;
+  row.querySelector('.btn-quitar').addEventListener('click', () => { row.remove(); actualizarCostoPreview(); });
+  row.querySelector('.ing-select').addEventListener('change', actualizarCostoPreview);
+  row.querySelector('.ing-cantidad').addEventListener('input', actualizarCostoPreview);
+  wrap.appendChild(row);
+  actualizarCostoPreview();
+}
+
+function leerFilasIngredientes() {
+  return [...document.querySelectorAll('.ing-row')].map(row => ({
+    ingrediente_id: row.querySelector('.ing-select').value,
+    cantidad: parseFloat(row.querySelector('.ing-cantidad').value)
+  })).filter(f => f.ingrediente_id && !isNaN(f.cantidad) && f.cantidad > 0);
+}
+
+function actualizarCostoPreview() {
+  const filas = leerFilasIngredientes();
+  const total = filas.reduce((acc, f) => {
+    const ing = INGREDIENTES_DISPONIBLES.find(i => i.id === f.ingrediente_id);
+    return acc + (ing ? ing.costo_unitario * f.cantidad : 0);
+  }, 0);
+  document.getElementById('costoPreview').textContent = '$' + total.toFixed(2);
+}
+
+document.getElementById('btnAgregarIng').addEventListener('click', () => agregarFilaIngrediente());
+
+async function cargarReceta(id) {
+  const { data: receta, error } = await supabaseClient.from('recetas').select('*').eq('id', id).single();
+  if (error || !receta) {
+    toast('No se pudo cargar la receta', 'error');
+    return;
+  }
+  document.getElementById('recetaId').value = receta.id;
+  document.getElementById('nombre').value = receta.nombre;
+  document.getElementById('categoria').value = receta.categoria;
+  document.getElementById('porciones').value = receta.porciones;
+  document.getElementById('descripcion').value = receta.descripcion || '';
+
+  const { data: detalle } = await supabaseClient
+    .from('detalle_receta')
+    .select('ingrediente_id, cantidad')
+    .eq('receta_id', id);
+
+  document.getElementById('ingredientesWrap').innerHTML = '';
+  if (detalle && detalle.length) {
+    detalle.forEach(d => agregarFilaIngrediente(d.ingrediente_id, d.cantidad));
+  } else {
+    agregarFilaIngrediente();
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+document.getElementById('formReceta').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const errorGeneral = document.getElementById('errorGeneral');
+  const errorIng = document.getElementById('errorIngredientes');
+  errorGeneral.classList.remove('show');
+  errorIng.classList.remove('show');
+
+  const nombre = document.getElementById('nombre').value.trim();
+  const categoria = document.getElementById('categoria').value;
+  const porciones = parseInt(document.getElementById('porciones').value, 10);
+  const descripcion = document.getElementById('descripcion').value.trim();
+  const filas = leerFilasIngredientes();
+
+  if (!nombre || !categoria || isNaN(porciones) || porciones < 1) {
+    errorGeneral.textContent = 'Completa nombre, categoría y porciones (mayor a 0).';
+    errorGeneral.classList.add('show');
+    return;
+  }
+  if (!filas.length) {
+    errorIng.classList.add('show');
+    return;
+  }
+  // Evitar ingrediente duplicado en la misma receta (coincide con la restricción UNIQUE en BD)
+  const idsUnicos = new Set(filas.map(f => f.ingrediente_id));
+  if (idsUnicos.size !== filas.length) {
+    errorGeneral.textContent = 'No repitas el mismo ingrediente en dos filas distintas.';
+    errorGeneral.classList.add('show');
+    return;
+  }
+
+  const btn = document.getElementById('btnGuardar');
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+
+  try {
+    const recetaId = document.getElementById('recetaId').value;
+    const payloadReceta = { nombre, categoria, porciones, descripcion: descripcion || null };
+
+    let idFinal = recetaId;
+    if (recetaId) {
+      const { error } = await supabaseClient.from('recetas').update(payloadReceta).eq('id', recetaId);
+      if (error) throw error;
+    } else {
+      const { data: nueva, error } = await supabaseClient.from('recetas').insert(payloadReceta).select('id').single();
+      if (error) throw error;
+      idFinal = nueva.id;
+    }
+
+    // Reemplazar el detalle completo: simple y consistente para un formulario pequeño
+    const { error: delError } = await supabaseClient.from('detalle_receta').delete().eq('receta_id', idFinal);
+    if (delError) throw delError;
+
+    const filasInsert = filas.map(f => ({ receta_id: idFinal, ingrediente_id: f.ingrediente_id, cantidad: f.cantidad }));
+    const { error: insError } = await supabaseClient.from('detalle_receta').insert(filasInsert);
+    if (insError) throw insError;
+
+    toast('Receta guardada — costo recalculado automáticamente');
+    location.href = 'index.html';
+  } catch (err) {
+    errorGeneral.textContent = 'Error al guardar: ' + err.message;
+    errorGeneral.classList.add('show');
+    btn.disabled = false;
+    btn.textContent = 'Guardar Receta';
+  }
+});
+
+init();
+</script>
+</body>
+</html>

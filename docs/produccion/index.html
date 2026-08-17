@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Producción — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.badge-plan-planificado { background:#EDF4FC; color:#2B6CB0; }
+.badge-plan-en_proceso { background:#FFF6DF; color:#8A6400; }
+.badge-plan-completado { background:#E7F7ED; color:var(--green); }
+.badge-plan-cancelado { background:#F2F2F2; color:#888; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Producción</div>
+  <div class="header-sub">Planes de producción</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <div class="flex-between mt-8" style="flex-wrap:wrap; gap:8px;">
+    <a href="../home.html" class="btn btn-outline btn-sm">← Módulos</a>
+    <button class="btn btn-primary btn-sm" id="btnNuevoPlan" style="display:none;">+ Nuevo plan</button>
+  </div>
+
+  <div class="panel mt-16" id="formPlanPanel" style="display:none;">
+    <div class="section-title" style="padding-top:0;">Nuevo plan de producción</div>
+    <form id="formPlan">
+      <div class="field-row">
+        <div class="field">
+          <label>Nombre del plan</label>
+          <input type="text" id="planNombre" required placeholder="Ej: Producción semana 29/07">
+        </div>
+        <div class="field">
+          <label>Fecha planificada</label>
+          <input type="date" id="planFecha" required>
+        </div>
+      </div>
+      <div class="field">
+        <label>Notas (opcional)</label>
+        <textarea id="planNotas" rows="2"></textarea>
+      </div>
+      <div class="flex gap-8 mt-16">
+        <button type="submit" class="btn btn-primary">Crear plan</button>
+        <button type="button" class="btn btn-outline" id="btnCancelarPlan">Cancelar</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="table-wrap mt-16">
+    <table>
+      <thead><tr>
+        <th>Plan</th><th>Fecha</th><th>Estado</th><th>Ítems</th><th></th>
+      </tr></thead>
+      <tbody id="tbody">
+        <tr><td colspan="5"><div class="loading-state">Cargando...</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── MODAL: REPETIR PLAN ── -->
+<div class="modal-backdrop" id="modalDuplicar" style="display:none;">
+  <div class="modal-card">
+    <button type="button" class="modal-close" id="btnCerrarModalDuplicar">✕</button>
+    <div class="section-title" style="padding-top:0;">Repetir plan otro día</div>
+    <p class="hint" id="duplicarOrigenTexto"></p>
+    <form id="formDuplicar">
+      <div class="field">
+        <label>Nombre del nuevo plan</label>
+        <input type="text" id="dupNombre" required>
+      </div>
+      <div class="field">
+        <label>Nueva fecha planificada</label>
+        <input type="date" id="dupFecha" required>
+      </div>
+      <div class="hint">Copia las mismas recetas, cantidades y sedes del plan original. Las cantidades producidas y las cargas a inventario empiezan de cero.</div>
+      <div class="flex gap-8 mt-16">
+        <button type="submit" class="btn btn-primary">Crear copia</button>
+        <button type="button" class="btn btn-outline" id="btnCancelarDuplicar">Cancelar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const ESTADO_LABEL = { planificado: 'Planificado', en_proceso: 'En proceso', completado: 'Completado', cancelado: 'Cancelado' };
+let PUEDE_ESCRIBIR = false;
+let SESSION = null;
+let PLANES = [];
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  if (ctx.perfil.rol === 'trabajador' && ctx.perfil.sede === 'Orinokia') {
+    document.querySelector('.container').innerHTML = '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+  PUEDE_ESCRIBIR = tieneRol(ctx.perfil, ['administrador', 'produccion']);
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  SESSION = session;
+  document.getElementById('btnNuevoPlan').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+  document.getElementById('planFecha').value = new Date().toISOString().slice(0, 10);
+  await cargarPlanes();
+}
+
+async function cargarPlanes() {
+  const tbody = document.getElementById('tbody');
+  const { data, error } = await supabaseClient
+    .from('planes_produccion')
+    .select('id, nombre, fecha_planificada, estado, plan_items(id)')
+    .order('fecha_planificada', { ascending: false });
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+  PLANES = data || [];
+  if (!PLANES.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No hay planes de producción todavía.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = PLANES.map(p => `
+    <tr>
+      <td class="wrap">${escapeHtml(p.nombre)}</td>
+      <td>${p.fecha_planificada}</td>
+      <td><span class="badge badge-plan-${p.estado}">${ESTADO_LABEL[p.estado] || p.estado}</span></td>
+      <td>${p.plan_items?.length || 0}</td>
+      <td class="flex gap-8">
+        <a class="btn btn-outline btn-sm" href="plan.html?id=${p.id}">Abrir</a>
+        ${PUEDE_ESCRIBIR ? `
+          <button class="btn btn-outline btn-sm dup-btn" data-id="${p.id}">Repetir</button>
+          <button class="btn btn-danger btn-sm eliminar-btn" data-id="${p.id}">Eliminar</button>
+        ` : ''}
+      </td>
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('.dup-btn').forEach(b => {
+    b.addEventListener('click', () => abrirModalDuplicar(b.dataset.id));
+  });
+  tbody.querySelectorAll('.eliminar-btn').forEach(b => {
+    b.addEventListener('click', () => eliminarPlan(b.dataset.id));
+  });
+}
+
+async function eliminarPlan(id) {
+  const plan = PLANES.find(p => p.id === id);
+  if (!plan) return;
+  const ok = window.confirm(
+    `¿Eliminar el plan "${plan.nombre}" (${plan.fecha_planificada})?\n\n` +
+    `Esto borra también sus ${plan.plan_items?.length || 0} receta(s) planificadas. ` +
+    `Los lotes que ya se hayan cargado a Inventario NO se borran, se quedan tal cual. Esta acción no se puede deshacer.`
+  );
+  if (!ok) return;
+
+  const { error } = await supabaseClient.from('planes_produccion').delete().eq('id', id);
+  if (error) { toast('No se pudo eliminar: ' + error.message, 'error'); return; }
+  toast('Plan eliminado');
+  await cargarPlanes();
+}
+
+/* ── REPETIR PLAN OTRO DÍA ── */
+
+let DUP_ORIGEN_ID = null;
+
+function abrirModalDuplicar(id) {
+  const plan = PLANES.find(p => p.id === id);
+  if (!plan) return;
+  DUP_ORIGEN_ID = id;
+  document.getElementById('duplicarOrigenTexto').textContent =
+    `Basado en "${plan.nombre}" (${plan.fecha_planificada}), con ${plan.plan_items?.length || 0} receta(s).`;
+  document.getElementById('dupNombre').value = plan.nombre;
+  document.getElementById('dupFecha').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('modalDuplicar').style.display = 'flex';
+}
+
+function cerrarModalDuplicar() {
+  document.getElementById('modalDuplicar').style.display = 'none';
+  DUP_ORIGEN_ID = null;
+}
+
+document.getElementById('btnCancelarDuplicar').addEventListener('click', cerrarModalDuplicar);
+document.getElementById('btnCerrarModalDuplicar').addEventListener('click', cerrarModalDuplicar);
+document.getElementById('modalDuplicar').addEventListener('click', (e) => {
+  if (e.target.id === 'modalDuplicar') cerrarModalDuplicar();
+});
+
+document.getElementById('formDuplicar').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!DUP_ORIGEN_ID) return;
+
+  const { data: items, error: errItems } = await supabaseClient
+    .from('plan_items').select('receta_id, cantidad_planificada, sede').eq('plan_id', DUP_ORIGEN_ID);
+  if (errItems) { toast('No se pudieron leer las recetas del plan original: ' + errItems.message, 'error'); return; }
+
+  const { data: nuevoPlan, error: errPlan } = await supabaseClient.from('planes_produccion').insert({
+    nombre: document.getElementById('dupNombre').value.trim(),
+    fecha_planificada: document.getElementById('dupFecha').value,
+    created_by: SESSION.user.id,
+  }).select('id').single();
+  if (errPlan) { toast('No se pudo crear el nuevo plan: ' + errPlan.message, 'error'); return; }
+
+  if (items.length) {
+    const nuevosItems = items.map(it => ({
+      plan_id: nuevoPlan.id, receta_id: it.receta_id,
+      cantidad_planificada: it.cantidad_planificada, sede: it.sede,
+    }));
+    const { error: errInsert } = await supabaseClient.from('plan_items').insert(nuevosItems);
+    if (errInsert) { toast('Plan creado, pero no se pudieron copiar las recetas: ' + errInsert.message, 'error'); return; }
+  }
+
+  location.href = `plan.html?id=${nuevoPlan.id}`;
+});
+
+document.getElementById('btnNuevoPlan').addEventListener('click', () => {
+  document.getElementById('formPlanPanel').style.display = '';
+});
+document.getElementById('btnCancelarPlan').addEventListener('click', () => {
+  document.getElementById('formPlanPanel').style.display = 'none';
+});
+
+document.getElementById('formPlan').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  const payload = {
+    nombre: document.getElementById('planNombre').value.trim(),
+    fecha_planificada: document.getElementById('planFecha').value,
+    notas: document.getElementById('planNotas').value.trim() || null,
+    created_by: session.user.id,
+  };
+  const { data, error } = await supabaseClient.from('planes_produccion').insert(payload).select('id').single();
+  if (error) { toast('No se pudo crear: ' + error.message, 'error'); return; }
+  location.href = `plan.html?id=${data.id}`;
+});
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

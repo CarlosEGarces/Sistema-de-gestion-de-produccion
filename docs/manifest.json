@@ -1,0 +1,18 @@
+{
+  "name": "Antojito's Cakes — Gestión de Producción",
+  "short_name": "Antojito's",
+  "description": "Recetas, escandallo, inventario y planes de producción de Antojito's Cakes.",
+  "start_url": "produccion/hoy.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF6FA",
+  "theme_color": "#1A1A2E",
+  "lang": "es",
+  "icons": [
+    { "src": "shared/img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "shared/img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "shared/img/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "shared/img/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

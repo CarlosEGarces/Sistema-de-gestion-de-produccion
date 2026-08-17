@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recetas — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Recetas</div>
+  <div class="header-sub">Fichas Técnicas</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <div class="flex-between mt-8" style="flex-wrap:wrap; gap:8px;">
+    <a href="../home.html" class="btn btn-outline btn-sm">← Módulos</a>
+    <div class="flex gap-8">
+      <a href="ingredientes.html" class="btn btn-outline btn-sm" id="btnIngredientes">Ingredientes</a>
+      <a href="receta_form.html" class="btn btn-primary btn-sm" id="btnNueva">+ Nueva Receta</a>
+    </div>
+  </div>
+
+  <div class="field mt-16" style="max-width:320px;">
+    <input type="text" id="buscar" placeholder="Buscar receta por nombre...">
+  </div>
+
+  <div id="grupos" class="mt-16"><div class="loading-state">Cargando...</div></div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const CATEGORIA_LABEL = { racion: 'Ración', torta_entera: 'Torta Entera', bebida: 'Bebida' };
+const CATEGORIA_PLURAL = { racion: 'Raciones', torta_entera: 'Tortas Enteras', bebida: 'Bebidas' };
+const TAMANOS = [
+  { kg: 0.25, label: '1/4 kg' }, { kg: 0.333, label: '1/3 kg' },
+  { kg: 0.5, label: '1/2 kg' }, { kg: 1, label: '1 kg' },
+];
+let RECETAS = [];
+let PARAMS = null;
+let TASA = null;
+let PUEDE_ESCRIBIR = false;
+let VER_DINERO = true; // trabajador no ve costos ni precios, solo cantidad de ingredientes
+let PRECIOS_ABIERTOS = null; // receta con el submenú de precios abierto
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  if (ctx.perfil.rol === 'trabajador' && ctx.perfil.sede === 'Orinokia') {
+    document.querySelector('.container').innerHTML = '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+  PUEDE_ESCRIBIR = tieneRol(ctx.perfil, ['administrador', 'produccion']);
+  VER_DINERO = ctx.perfil.rol !== 'trabajador';
+  document.getElementById('btnNueva').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+  document.getElementById('btnIngredientes').style.display = VER_DINERO ? '' : 'none';
+  await cargarRecetas();
+}
+
+async function cargarRecetas() {
+  const cont = document.getElementById('grupos');
+  const [{ data, error }, { data: params }, { data: tasa }] = await Promise.all([
+    supabaseClient
+      .from('recetas')
+      .select('*, detalle_receta(cantidad, es_empaque, ingredientes(costo_unitario))')
+      .order('nombre'),
+    supabaseClient.from('escandallo_parametros').select('*').eq('id', 1).single(),
+    supabaseClient.from('tasa_cambio').select('*').eq('id', 1).single(),
+  ]);
+
+  if (error) {
+    cont.innerHTML = `<div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  PARAMS = params;
+  TASA = tasa;
+  RECETAS = data.map(r => {
+    let mp = 0, empaque = 0;
+    for (const d of (r.detalle_receta || [])) {
+      const costo = d.cantidad * (d.ingredientes?.costo_unitario || 0);
+      if (d.es_empaque) empaque += costo; else mp += costo;
+    }
+    return { ...r, costo_mp: mp, costo_empaque: empaque, num_ingredientes: (r.detalle_receta || []).length };
+  });
+  render(RECETAS);
+}
+
+// Misma fórmula del módulo Escandallo (empaque fijo, MP escala con el tamaño)
+function precioSugerido(r, factor) {
+  if (!PARAMS) return null;
+  const p = { ...PARAMS, ...(r.escandallo_override || {}) };
+  const mp = r.costo_mp * factor + r.costo_empaque;
+  const directo = mp + (+p.equipos) + (+p.mano_obra) + (+p.carga_social);
+  const total = directo * (1 + p.imprevisto_pct / 100) + (+p.costos_admin);
+  return { costo: total, sugerido: total * (1 + p.utilidad_pct / 100) };
+}
+
+function fmtBs(n) {
+  if (!TASA) return '';
+  const bs = Number(n) * Number(TASA.tasa);
+  return ` <span class="hint">(Bs. ${bs.toLocaleString('es-VE', { maximumFractionDigits: 2 })})</span>`;
+}
+
+const ORDEN_CATEGORIAS = ['torta_entera', 'racion', 'bebida'];
+
+function render(lista) {
+  const cont = document.getElementById('grupos');
+  if (!lista.length) {
+    cont.innerHTML = `<div class="empty-state">No hay recetas que coincidan.</div>`;
+    return;
+  }
+  let html = '';
+  for (const cat of ORDEN_CATEGORIAS) {
+    const grupo = lista.filter(r => r.categoria === cat);
+    if (!grupo.length) continue;
+    html += `<div class="section-title mt-24">${CATEGORIA_PLURAL[cat] || cat}</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Nombre</th><th>Porciones</th>
+          ${VER_DINERO ? '<th>Costo base</th><th>Precio venta</th>' : '<th>Ingredientes</th>'}
+          <th>Estado</th><th></th>
+        </tr></thead>
+        <tbody>` + grupo.map(r => `
+        <tr>
+          <td class="wrap">${escapeHtml(r.nombre)}</td>
+          <td>${r.porciones}</td>
+          ${VER_DINERO
+            ? `<td>$${Number(r.costo_base).toFixed(2)}${fmtBs(r.costo_base)}</td>
+               <td>${r.precio_venta != null ? '$' + Number(r.precio_venta).toFixed(2) + fmtBs(r.precio_venta) : '—'}</td>`
+            : `<td>${r.num_ingredientes} ingrediente(s)</td>`}
+          <td><span class="badge ${r.activo ? 'badge-ok' : 'badge-off'}">${r.activo ? 'Activa' : 'Inactiva'}</span></td>
+          <td>
+            <a class="btn btn-outline btn-sm" href="ficha_tecnica.html?id=${r.id}">Ficha</a>
+            ${VER_DINERO ? `<button class="btn btn-outline btn-sm precios-btn" data-id="${r.id}">${PRECIOS_ABIERTOS === r.id ? '▴ Precios' : '▾ Precios'}</button>` : ''}
+            ${PUEDE_ESCRIBIR ? `<a class="btn btn-outline btn-sm" href="receta_form.html?id=${r.id}">Editar</a>` : ''}
+          </td>
+        </tr>` + (VER_DINERO && PRECIOS_ABIERTOS === r.id ? filaPrecios(r) : '')).join('') + `</tbody></table></div>`;
+  }
+  cont.innerHTML = html;
+
+  cont.querySelectorAll('.precios-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      const id = b.dataset.id;
+      PRECIOS_ABIERTOS = PRECIOS_ABIERTOS === id ? null : id;
+      renderActual();
+    });
+  });
+}
+
+let FILTRO = '';
+function renderActual() {
+  render(FILTRO ? RECETAS.filter(r => r.nombre.toLowerCase().includes(FILTRO)) : RECETAS);
+}
+
+function filaPrecios(r) {
+  if (!r.tamano_base_kg) {
+    return `<tr><td colspan="6" style="background:var(--pink-pale);">
+      <div class="hint" style="padding:6px 0;">Esta receta no tiene tamaño base definido — no se pueden calcular precios estandarizados.
+      El precio de venta actual es ${r.precio_venta != null ? '$' + Number(r.precio_venta).toFixed(2) : '—'}.</div></td></tr>`;
+  }
+  const filas = TAMANOS.map(t => {
+    const factor = t.kg / r.tamano_base_kg;
+    const e = precioSugerido(r, factor);
+    const esBase = Math.abs(t.kg - r.tamano_base_kg) < 0.01;
+    return `<tr>
+      <td>${t.label}${esBase ? ' <span class="badge badge-ok">base</span>' : ''}</td>
+      <td>$${e.costo.toFixed(2)}${fmtBs(e.costo)}</td>
+      <td><strong>$${e.sugerido.toFixed(2)}</strong>${fmtBs(e.sugerido)}</td>
+      ${esBase ? `<td>${r.precio_venta != null ? '$' + Number(r.precio_venta).toFixed(2) + fmtBs(r.precio_venta) : '—'}</td>` : '<td>—</td>'}
+    </tr>`;
+  }).join('');
+  return `<tr><td colspan="6" style="background:var(--pink-pale);">
+    <div style="max-width:520px; padding:4px 0;">
+      <table style="font-size:12px;">
+        <thead><tr><th>Tamaño</th><th>Costo</th><th>Precio sugerido</th><th>Precio venta</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      <div class="hint mt-8">Ingredientes escalados por regla de tres; el empaque no escala. El precio de venta solo aplica al tamaño base.</div>
+    </div>
+  </td></tr>`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+document.getElementById('buscar').addEventListener('input', (e) => {
+  FILTRO = e.target.value.trim().toLowerCase();
+  renderActual();
+});
+
+init();
+</script>
+</body>
+</html>

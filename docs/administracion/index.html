@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Administración — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Administración</div>
+  <div class="header-sub">Cuentas y niveles de acceso</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <div class="flex-between mt-8" style="flex-wrap:wrap; gap:8px;">
+    <a href="../home.html" class="btn btn-outline btn-sm">← Módulos</a>
+  </div>
+
+  <div class="hint mt-16">
+    Las cuentas aparecen aquí automáticamente en cuanto las crees en Supabase
+    (Authentication → Users → Add user). Por defecto entran con rol
+    <strong>Producción</strong> y activas — ajústalas abajo.
+  </div>
+
+  <div class="table-wrap mt-16">
+    <table>
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Correo</th>
+          <th>Rol</th>
+          <th>Sede</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="5"><div class="loading-state">Cargando...</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const ROLES = ['administrador', 'produccion', 'inventario', 'trabajador'];
+let MI_ID = null;
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  MI_ID = ctx.perfil.id;
+
+  if (!tieneRol(ctx.perfil, ['administrador'])) {
+    document.querySelector('.container').innerHTML =
+      '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+
+  await cargarPerfiles();
+}
+
+async function cargarPerfiles() {
+  const tbody = document.getElementById('tbody');
+  const { data, error } = await supabaseClient
+    .from('perfiles')
+    .select('id, nombre, email, rol, sede, activo')
+    .order('nombre');
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+  render(data);
+}
+
+const SEDE_LABEL = { Orinokia: 'CC Orinokia', VillaAlianza: 'Villa Alianza' };
+
+function render(lista) {
+  const tbody = document.getElementById('tbody');
+  if (!lista.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No hay cuentas registradas todavía.</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = lista.map(p => {
+    const esYo = p.id === MI_ID;
+    const opciones = ROLES.map(r => `<option value="${r}" ${r === p.rol ? 'selected' : ''}>${capitalizar(r)}</option>`).join('');
+    const opcionesSede = `
+      <option value="" ${!p.sede ? 'selected' : ''}>Todas (sin asignar)</option>
+      <option value="Orinokia" ${p.sede === 'Orinokia' ? 'selected' : ''}>CC Orinokia</option>
+      <option value="VillaAlianza" ${p.sede === 'VillaAlianza' ? 'selected' : ''}>Villa Alianza</option>
+    `;
+    return `
+    <tr data-id="${p.id}">
+      <td class="wrap">${escapeHtml(p.nombre)}${esYo ? ' <span class="hint">(tú)</span>' : ''}</td>
+      <td class="wrap">${escapeHtml(p.email || '')}</td>
+      <td>
+        <select class="rol-select" data-id="${p.id}" ${esYo ? 'disabled title="No puedes cambiar tu propio rol"' : ''}>
+          ${opciones}
+        </select>
+      </td>
+      <td>
+        <select class="sede-select" data-id="${p.id}" title="Filtra qué sede ve este usuario en Inventario. 'Todas' = ve ambas (ej. administrador o supervisor).">
+          ${opcionesSede}
+        </select>
+      </td>
+      <td>
+        <button class="btn btn-sm ${p.activo ? 'btn-secondary' : 'btn-outline'} toggle-activo" data-id="${p.id}" data-activo="${p.activo}" ${esYo ? 'disabled title="No puedes desactivar tu propia cuenta"' : ''}>
+          <span class="badge ${p.activo ? 'badge-ok' : 'badge-off'}">${p.activo ? 'Activa' : 'Inactiva'}</span>
+        </button>
+      </td>
+    </tr>
+  `;
+  }).join('');
+
+  tbody.querySelectorAll('.rol-select').forEach(sel => {
+    sel.addEventListener('change', async (e) => {
+      const id = e.target.dataset.id;
+      const rol = e.target.value;
+      const { error } = await supabaseClient.from('perfiles').update({ rol }).eq('id', id);
+      if (error) {
+        toast('No se pudo cambiar el rol: ' + error.message, 'error');
+        await cargarPerfiles();
+        return;
+      }
+      toast('Rol actualizado');
+    });
+  });
+
+  tbody.querySelectorAll('.sede-select').forEach(sel => {
+    sel.addEventListener('change', async (e) => {
+      const id = e.target.dataset.id;
+      const sede = e.target.value || null;
+      const { error } = await supabaseClient.from('perfiles').update({ sede }).eq('id', id);
+      if (error) {
+        toast('No se pudo cambiar la sede: ' + error.message, 'error');
+        await cargarPerfiles();
+        return;
+      }
+      toast('Sede actualizada');
+    });
+  });
+
+  tbody.querySelectorAll('.toggle-activo').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const el = e.currentTarget;
+      const id = el.dataset.id;
+      const nuevoEstado = el.dataset.activo !== 'true';
+      const { error } = await supabaseClient.from('perfiles').update({ activo: nuevoEstado }).eq('id', id);
+      if (error) {
+        toast('No se pudo actualizar el estado: ' + error.message, 'error');
+        return;
+      }
+      toast(nuevoEstado ? 'Cuenta activada' : 'Cuenta desactivada');
+      await cargarPerfiles();
+    });
+  });
+}
+
+function capitalizar(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

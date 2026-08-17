@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pedidos — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+.cal-dow { text-align:center; font-size:11px; font-weight:700; color:var(--gray); text-transform:uppercase; padding:4px 0; }
+.cal-day {
+  aspect-ratio:1; border-radius:10px; background:#fff; box-shadow:var(--shadow);
+  padding:6px; display:flex; flex-direction:column; cursor:pointer; position:relative;
+  border:2px solid transparent; min-height:56px;
+}
+.cal-day.fuera-mes { opacity:.35; }
+.cal-day.hoy { border-color:var(--pink); }
+.cal-day.seleccionado { background:var(--pink-pale); }
+.cal-day .num { font-size:12px; font-weight:600; color:var(--dark); }
+.cal-day .badges { display:flex; gap:3px; flex-wrap:wrap; margin-top:auto; }
+.cal-dot { width:7px; height:7px; border-radius:50%; }
+.dot-pendiente { background:#E9A000; }
+.dot-confirmado { background:#2B6CB0; }
+.dot-entregado { background:var(--green); }
+.cal-nav { display:flex; align-items:center; gap:10px; justify-content:center; }
+.cal-mes-titulo { font-family:'Bodoni Moda',serif; font-size:20px; font-weight:700; min-width:180px; text-align:center; }
+.pedido-card {
+  background:#fff; border-radius:var(--radius); box-shadow:var(--shadow); padding:14px 16px; margin-bottom:10px;
+  border-left:4px solid var(--pink);
+}
+.pedido-card.estado-cancelado { border-left-color:#ccc; opacity:.6; }
+.pedido-card.estado-entregado { border-left-color:var(--green); }
+.pedido-card.estado-confirmado { border-left-color:#2B6CB0; }
+.mic-btn { border-radius:50%; width:36px; height:36px; padding:0; flex-shrink:0; }
+.mic-btn.grabando { background:var(--red); color:#fff; border-color:var(--red); animation:pulso 1s infinite; }
+@keyframes pulso { 0%,100%{opacity:1;} 50%{opacity:.5;} }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Pedidos</div>
+  <div class="header-sub">Calendario de entregas</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <div class="flex-between mt-8" style="flex-wrap:wrap; gap:8px;">
+    <a href="../home.html" class="btn btn-outline btn-sm">← Módulos</a>
+    <button class="btn btn-primary btn-sm" id="btnNuevoPedido" style="display:none;">+ Nuevo pedido</button>
+  </div>
+
+  <div class="panel mt-16">
+    <div class="cal-nav">
+      <button class="btn btn-outline btn-sm" id="btnMesAnterior">←</button>
+      <div class="cal-mes-titulo" id="mesTitulo"></div>
+      <button class="btn btn-outline btn-sm" id="btnMesSiguiente">→</button>
+      <button class="btn btn-outline btn-sm" id="btnHoy">Hoy</button>
+    </div>
+    <div class="cal-grid mt-16" id="calDow"></div>
+    <div class="cal-grid mt-8" id="calGrid"></div>
+    <div class="flex gap-8 mt-16" style="flex-wrap:wrap; font-size:12px; color:var(--gray);">
+      <span><span class="cal-dot dot-pendiente" style="display:inline-block;"></span> Pendiente</span>
+      <span><span class="cal-dot dot-confirmado" style="display:inline-block;"></span> Confirmado</span>
+      <span><span class="cal-dot dot-entregado" style="display:inline-block;"></span> Entregado</span>
+    </div>
+  </div>
+
+  <div class="section-title mt-24" id="diaSeleccionadoTitulo">Pedidos</div>
+  <div id="listaPedidosDia"><div class="empty-state">Selecciona un día del calendario.</div></div>
+</div>
+
+<!-- ── MODAL: NUEVO / EDITAR PEDIDO ── -->
+<div class="modal-backdrop" id="modalPedido" style="display:none;">
+  <div class="modal-card" style="max-width:560px;">
+    <button type="button" class="modal-close" id="btnCerrarModalPedido">✕</button>
+    <div class="section-title" style="padding-top:0;" id="modalPedidoTitulo">Nuevo pedido</div>
+    <form id="formPedido">
+      <input type="hidden" id="pedidoId">
+
+      <div class="section-title" style="font-size:13px; padding-top:0;">Cliente</div>
+      <div class="field-row">
+        <div class="field">
+          <label>Nombre</label>
+          <input type="text" id="clienteNombre" required>
+        </div>
+        <div class="field">
+          <label>Teléfono</label>
+          <input type="tel" id="clienteTelefono" placeholder="0414-1234567"
+            pattern="[0-9+()\s-]{7,20}" maxlength="20"
+            title="Solo números, espacios, guiones, paréntesis o +. Entre 7 y 20 caracteres.">
+        </div>
+      </div>
+
+      <div class="section-title" style="font-size:13px;">Entrega</div>
+      <div class="field-row">
+        <div class="field">
+          <label>Fecha de entrega</label>
+          <input type="date" id="pedidoFecha" required>
+        </div>
+        <div class="field">
+          <label>Hora (opcional)</label>
+          <input type="time" id="pedidoHora">
+        </div>
+        <div class="field">
+          <label>Sede de entrega</label>
+          <select id="pedidoSede" required>
+            <option value="Orinokia">CC Orinokia Mall</option>
+            <option value="VillaAlianza">Villa Alianza</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label class="hint"><input type="checkbox" id="pedidoDomicilio"> Es entrega a domicilio (llevar la torta a la dirección del cliente)</label>
+      </div>
+      <div class="field" id="campoDireccion" style="display:none;">
+        <label>Dirección de entrega</label>
+        <textarea id="pedidoDireccion" rows="2" placeholder="Ej: Urb. Andrés Eloy Blanco, calle 3, casa 12, cerca de..."></textarea>
+      </div>
+
+      <div class="section-title" style="font-size:13px;">Producto</div>
+      <div class="field">
+        <label>Tipo</label>
+        <div class="flex gap-8">
+          <label class="hint"><input type="radio" name="pedidoTipo" value="receta" checked> Receta existente</label>
+          <label class="hint"><input type="radio" name="pedidoTipo" value="personalizada"> Torta personalizada</label>
+        </div>
+      </div>
+      <div class="field" id="campoReceta">
+        <label>Receta</label>
+        <select id="pedidoReceta"></select>
+      </div>
+      <div class="field" id="campoPersonalizada" style="display:none;">
+        <label>Descripción de la torta personalizada</label>
+        <textarea id="pedidoDescripcion" rows="2" placeholder="Ej: Torta temática de dinosaurios, 3 pisos, para 40 personas..."></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Cantidad</label>
+          <input type="number" id="pedidoCantidad" min="1" step="1" value="1" required>
+        </div>
+        <div class="field">
+          <label>Precio acordado ($)</label>
+          <input type="number" id="pedidoPrecio" min="0" step="0.01">
+        </div>
+        <div class="field">
+          <label>Anticipo ($)</label>
+          <input type="number" id="pedidoAnticipo" min="0" step="0.01">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Notas del encargo (sabor, mensaje en la torta, alergias...)</label>
+        <div class="flex gap-8" style="align-items:flex-start;">
+          <textarea id="pedidoNotas" rows="3" style="flex:1;"></textarea>
+          <button type="button" class="btn btn-outline mic-btn" id="btnMic" title="Dictar por voz">🎤</button>
+        </div>
+        <div class="hint" id="micEstado"></div>
+      </div>
+
+      <div class="field" id="campoEstado" style="display:none;">
+        <label>Estado</label>
+        <select id="pedidoEstado">
+          <option value="pendiente">Pendiente</option>
+          <option value="confirmado">Confirmado</option>
+          <option value="entregado">Entregado</option>
+          <option value="cancelado">Cancelado</option>
+        </select>
+      </div>
+
+      <div class="flex gap-8 mt-16">
+        <button type="submit" class="btn btn-primary">Guardar</button>
+        <button type="button" class="btn btn-outline" id="btnCancelarPedido">Cancelar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const ESTADO_LABEL = { pendiente: 'Pendiente', confirmado: 'Confirmado', entregado: 'Entregado', cancelado: 'Cancelado' };
+const DOW = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+let PUEDE_ESCRIBIR = false;
+let SESSION = null;
+let RECETAS = [];
+let MES_ACTUAL = new Date(); MES_ACTUAL.setDate(1);
+let PEDIDOS_MES = [];
+let DIA_SEL = null; // 'YYYY-MM-DD'
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  PUEDE_ESCRIBIR = tieneRol(ctx.perfil, ['administrador', 'produccion', 'inventario', 'trabajador']);
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  SESSION = session;
+
+  document.getElementById('btnNuevoPedido').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+
+  document.getElementById('calDow').innerHTML = DOW.map(d => `<div class="cal-dow">${d}</div>`).join('');
+
+  const { data: recetas } = await supabaseClient.from('recetas').select('id, nombre').eq('activo', true).order('nombre');
+  RECETAS = recetas || [];
+  document.getElementById('pedidoReceta').innerHTML = RECETAS.map(r => `<option value="${r.id}">${escapeHtml(r.nombre)}</option>`).join('');
+
+  configurarModal();
+  configurarMic();
+
+  document.getElementById('btnMesAnterior').addEventListener('click', () => cambiarMes(-1));
+  document.getElementById('btnMesSiguiente').addEventListener('click', () => cambiarMes(1));
+  document.getElementById('btnHoy').addEventListener('click', () => { MES_ACTUAL = new Date(); MES_ACTUAL.setDate(1); cargarMes(); });
+
+  await cargarMes();
+}
+
+function cambiarMes(delta) {
+  MES_ACTUAL.setMonth(MES_ACTUAL.getMonth() + delta);
+  cargarMes();
+}
+
+function ymd(d) { return d.toISOString().slice(0, 10); }
+
+async function cargarMes() {
+  const anio = MES_ACTUAL.getFullYear(), mes = MES_ACTUAL.getMonth();
+  document.getElementById('mesTitulo').textContent =
+    MES_ACTUAL.toLocaleDateString('es-VE', { month: 'long', year: 'numeric' });
+
+  const primerDiaMes = new Date(anio, mes, 1);
+  const ultimoDiaMes = new Date(anio, mes + 1, 0);
+  const inicioGrilla = new Date(primerDiaMes); inicioGrilla.setDate(inicioGrilla.getDate() - primerDiaMes.getDay());
+  const finGrilla = new Date(ultimoDiaMes); finGrilla.setDate(finGrilla.getDate() + (6 - ultimoDiaMes.getDay()));
+
+  const { data, error } = await supabaseClient
+    .from('pedidos')
+    .select('id, fecha_entrega, estado')
+    .gte('fecha_entrega', ymd(inicioGrilla))
+    .lte('fecha_entrega', ymd(finGrilla))
+    .neq('estado', 'cancelado');
+
+  PEDIDOS_MES = error ? [] : data;
+  renderCalendario(inicioGrilla, finGrilla, primerDiaMes, ultimoDiaMes);
+}
+
+function renderCalendario(inicio, fin, primerDiaMes, ultimoDiaMes) {
+  const cont = document.getElementById('calGrid');
+  const hoyStr = ymd(new Date());
+  const porDia = {};
+  for (const p of PEDIDOS_MES) {
+    (porDia[p.fecha_entrega] = porDia[p.fecha_entrega] || []).push(p);
+  }
+
+  let html = '';
+  const cursor = new Date(inicio);
+  while (cursor <= fin) {
+    const str = ymd(cursor);
+    const fueraDeMes = cursor < primerDiaMes || cursor > ultimoDiaMes;
+    const estados = (porDia[str] || []).map(p => p.estado);
+    const badges = ['pendiente', 'confirmado', 'entregado']
+      .filter(e => estados.includes(e))
+      .map(e => `<span class="cal-dot dot-${e}"></span>`).join('');
+
+    html += `<div class="cal-day ${fueraDeMes ? 'fuera-mes' : ''} ${str === hoyStr ? 'hoy' : ''} ${str === DIA_SEL ? 'seleccionado' : ''}" data-fecha="${str}">
+      <span class="num">${cursor.getDate()}</span>
+      <div class="badges">${badges}</div>
+    </div>`;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  cont.innerHTML = html;
+
+  cont.querySelectorAll('.cal-day').forEach(el => {
+    el.addEventListener('click', () => seleccionarDia(el.dataset.fecha));
+  });
+
+  if (DIA_SEL) cargarPedidosDelDia(DIA_SEL);
+}
+
+async function seleccionarDia(fecha) {
+  DIA_SEL = fecha;
+  document.querySelectorAll('.cal-day').forEach(el => el.classList.toggle('seleccionado', el.dataset.fecha === fecha));
+  await cargarPedidosDelDia(fecha);
+}
+
+async function cargarPedidosDelDia(fecha) {
+  const fechaBonita = new Date(fecha + 'T00:00:00').toLocaleDateString('es-VE', { weekday: 'long', day: 'numeric', month: 'long' });
+  document.getElementById('diaSeleccionadoTitulo').textContent = `Pedidos — ${fechaBonita}`;
+  const cont = document.getElementById('listaPedidosDia');
+  cont.innerHTML = '<div class="loading-state">Cargando...</div>';
+
+  const { data, error } = await supabaseClient
+    .from('pedidos')
+    .select('*, clientes(nombre, telefono), recetas(nombre)')
+    .eq('fecha_entrega', fecha)
+    .order('hora_entrega', { ascending: true, nullsFirst: false });
+
+  if (error) { cont.innerHTML = `<div class="empty-state">Error: ${escapeHtml(error.message)}</div>`; return; }
+  if (!data.length) { cont.innerHTML = '<div class="empty-state">No hay pedidos para este día.</div>'; return; }
+
+  cont.innerHTML = data.map(p => `
+    <div class="pedido-card estado-${p.estado}">
+      <div class="flex-between" style="flex-wrap:wrap; gap:8px;">
+        <div>
+          <strong>${escapeHtml(p.tipo === 'receta' ? (p.recetas?.nombre || '—') : 'Personalizada')}</strong>
+          <span class="hint">× ${p.cantidad}</span>
+          ${p.hora_entrega ? `<span class="hint"> · ${p.hora_entrega.slice(0, 5)}</span>` : ''}
+        </div>
+        <span class="badge ${p.estado === 'entregado' ? 'badge-ok' : (p.estado === 'cancelado' ? 'badge-off' : 'badge-warn')}">${ESTADO_LABEL[p.estado]}</span>
+      </div>
+      ${p.tipo === 'personalizada' ? `<div class="hint mt-8">${escapeHtml(p.descripcion_personalizada)}</div>` : ''}
+      <div class="hint mt-8">👤 ${escapeHtml(p.clientes?.nombre || '—')} ${p.clientes?.telefono ? '· ' + escapeHtml(p.clientes.telefono) : ''}</div>
+      ${p.notas ? `<div class="hint mt-8">📝 ${escapeHtml(p.notas)}</div>` : ''}
+      <div class="hint mt-8">📍 ${p.sede === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}
+        ${p.precio != null ? ` · $${Number(p.precio).toFixed(2)}` : ''}
+        ${p.anticipo != null ? ` (anticipo $${Number(p.anticipo).toFixed(2)})` : ''}</div>
+      ${p.es_domicilio ? `<div class="hint mt-8">🚚 Entrega a domicilio: ${escapeHtml(p.direccion_entrega)}</div>` : ''}
+      ${PUEDE_ESCRIBIR ? `<button class="btn btn-outline btn-sm mt-8" onclick='abrirModalPedido(${JSON.stringify(p).replace(/'/g, "&#39;")})'>Editar</button>` : ''}
+    </div>
+  `).join('');
+}
+
+/* ── MODAL: crear/editar pedido ── */
+
+function configurarModal() {
+  document.getElementById('pedidoDomicilio').addEventListener('change', (e) => {
+    document.getElementById('campoDireccion').style.display = e.target.checked ? '' : 'none';
+  });
+
+  document.querySelectorAll('input[name="pedidoTipo"]').forEach(r => {
+    r.addEventListener('change', () => {
+      const esReceta = document.querySelector('input[name="pedidoTipo"]:checked').value === 'receta';
+      document.getElementById('campoReceta').style.display = esReceta ? '' : 'none';
+      document.getElementById('campoPersonalizada').style.display = esReceta ? 'none' : '';
+    });
+  });
+
+  document.getElementById('btnNuevoPedido').addEventListener('click', () => abrirModalPedido(null));
+  document.getElementById('btnCancelarPedido').addEventListener('click', cerrarModalPedido);
+  document.getElementById('btnCerrarModalPedido').addEventListener('click', cerrarModalPedido);
+  document.getElementById('modalPedido').addEventListener('click', (e) => {
+    if (e.target.id === 'modalPedido') cerrarModalPedido();
+  });
+
+  document.getElementById('formPedido').addEventListener('submit', guardarPedido);
+}
+
+function abrirModalPedido(p) {
+  detenerMic();
+  document.getElementById('formPedido').reset();
+  document.getElementById('campoReceta').style.display = '';
+  document.getElementById('campoPersonalizada').style.display = 'none';
+  document.getElementById('campoEstado').style.display = p ? '' : 'none';
+  document.getElementById('modalPedidoTitulo').textContent = p ? 'Editar pedido' : 'Nuevo pedido';
+
+  document.getElementById('pedidoId').value = p?.id || '';
+  document.getElementById('clienteNombre').value = p?.clientes?.nombre || '';
+  document.getElementById('clienteTelefono').value = p?.clientes?.telefono || '';
+  document.getElementById('pedidoFecha').value = p?.fecha_entrega || DIA_SEL || new Date().toISOString().slice(0, 10);
+  document.getElementById('pedidoHora').value = p?.hora_entrega ? p.hora_entrega.slice(0, 5) : '';
+  document.getElementById('pedidoSede').value = p?.sede || 'Orinokia';
+  document.getElementById('pedidoDomicilio').checked = !!p?.es_domicilio;
+  document.getElementById('campoDireccion').style.display = p?.es_domicilio ? '' : 'none';
+  document.getElementById('pedidoDireccion').value = p?.direccion_entrega || '';
+  document.getElementById('pedidoCantidad').value = p?.cantidad || 1;
+  document.getElementById('pedidoPrecio').value = p?.precio ?? '';
+  document.getElementById('pedidoAnticipo').value = p?.anticipo ?? '';
+  document.getElementById('pedidoNotas').value = p?.notas || '';
+  document.getElementById('pedidoEstado').value = p?.estado || 'pendiente';
+
+  const tipo = p?.tipo || 'receta';
+  document.querySelector(`input[name="pedidoTipo"][value="${tipo}"]`).checked = true;
+  document.getElementById('campoReceta').style.display = tipo === 'receta' ? '' : 'none';
+  document.getElementById('campoPersonalizada').style.display = tipo === 'receta' ? 'none' : '';
+  if (tipo === 'receta' && p?.receta_id) document.getElementById('pedidoReceta').value = p.receta_id;
+  document.getElementById('pedidoDescripcion').value = p?.descripcion_personalizada || '';
+
+  document.getElementById('modalPedido').style.display = 'flex';
+}
+
+function cerrarModalPedido() {
+  detenerMic();
+  document.getElementById('modalPedido').style.display = 'none';
+}
+
+async function guardarPedido(e) {
+  e.preventDefault();
+  const id = document.getElementById('pedidoId').value;
+  const nombre = document.getElementById('clienteNombre').value.trim();
+  const telefono = document.getElementById('clienteTelefono').value.trim() || null;
+  if (telefono && !/^[0-9+()\s-]{7,20}$/.test(telefono)) {
+    toast('Teléfono inválido: solo números, espacios, guiones, paréntesis o +', 'error');
+    return;
+  }
+
+  // Upsert de cliente: si dio teléfono y ya existe, reutiliza esa fila (evita duplicados).
+  let clienteId;
+  if (telefono) {
+    const { data: cliente, error: errCliente } = await supabaseClient
+      .from('clientes').upsert({ nombre, telefono }, { onConflict: 'telefono' }).select('id').single();
+    if (errCliente) { toast('No se pudo guardar el cliente: ' + errCliente.message, 'error'); return; }
+    clienteId = cliente.id;
+  } else {
+    const { data: cliente, error: errCliente } = await supabaseClient
+      .from('clientes').insert({ nombre }).select('id').single();
+    if (errCliente) { toast('No se pudo guardar el cliente: ' + errCliente.message, 'error'); return; }
+    clienteId = cliente.id;
+  }
+
+  const esDomicilio = document.getElementById('pedidoDomicilio').checked;
+  const direccionEntrega = document.getElementById('pedidoDireccion').value.trim();
+  if (esDomicilio && !direccionEntrega) {
+    toast('Falta la dirección de entrega', 'error');
+    return;
+  }
+
+  const tipo = document.querySelector('input[name="pedidoTipo"]:checked').value;
+  const payload = {
+    cliente_id: clienteId,
+    fecha_entrega: document.getElementById('pedidoFecha').value,
+    hora_entrega: document.getElementById('pedidoHora').value || null,
+    sede: document.getElementById('pedidoSede').value,
+    es_domicilio: esDomicilio,
+    direccion_entrega: esDomicilio ? direccionEntrega : null,
+    tipo,
+    receta_id: tipo === 'receta' ? document.getElementById('pedidoReceta').value : null,
+    descripcion_personalizada: tipo === 'personalizada' ? document.getElementById('pedidoDescripcion').value.trim() : null,
+    cantidad: parseInt(document.getElementById('pedidoCantidad').value, 10),
+    precio: document.getElementById('pedidoPrecio').value === '' ? null : parseFloat(document.getElementById('pedidoPrecio').value),
+    anticipo: document.getElementById('pedidoAnticipo').value === '' ? null : parseFloat(document.getElementById('pedidoAnticipo').value),
+    notas: document.getElementById('pedidoNotas').value.trim() || null,
+  };
+
+  let error;
+  if (id) {
+    payload.estado = document.getElementById('pedidoEstado').value;
+    ({ error } = await supabaseClient.from('pedidos').update(payload).eq('id', id));
+  } else {
+    payload.created_by = SESSION.user.id;
+    ({ error } = await supabaseClient.from('pedidos').insert(payload));
+  }
+  if (error) { toast('No se pudo guardar el pedido: ' + error.message, 'error'); return; }
+
+  toast('Pedido guardado');
+  cerrarModalPedido();
+  await cargarMes();
+  if (DIA_SEL) await cargarPedidosDelDia(DIA_SEL);
+}
+
+/* ── DICTADO POR VOZ (Web Speech API) ── */
+
+let RECONOCEDOR = null;
+let GRABANDO = false;
+
+function configurarMic() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const btn = document.getElementById('btnMic');
+  if (!SpeechRecognition) {
+    btn.disabled = true;
+    btn.title = 'Tu navegador no soporta dictado por voz (funciona en Chrome)';
+    document.getElementById('micEstado').textContent = 'Dictado por voz no disponible en este navegador.';
+    return;
+  }
+
+  RECONOCEDOR = new SpeechRecognition();
+  RECONOCEDOR.lang = 'es-VE';
+  RECONOCEDOR.continuous = true;
+  RECONOCEDOR.interimResults = true;
+
+  let baseTexto = '';
+
+  RECONOCEDOR.addEventListener('result', (ev) => {
+    let textoFinal = '', textoParcial = '';
+    for (let i = 0; i < ev.results.length; i++) {
+      const t = ev.results[i][0].transcript;
+      if (ev.results[i].isFinal) textoFinal += t + ' ';
+      else textoParcial += t;
+    }
+    document.getElementById('pedidoNotas').value = (baseTexto + textoFinal + textoParcial).trim();
+  });
+  RECONOCEDOR.addEventListener('end', () => {
+    if (GRABANDO) {
+      // continuous a veces se corta solo tras silencio largo; lo retomamos.
+      try { RECONOCEDOR.start(); } catch (_) {}
+    }
+  });
+  RECONOCEDOR.addEventListener('error', (ev) => {
+    document.getElementById('micEstado').textContent = 'Error de dictado: ' + ev.error;
+    detenerMic();
+  });
+
+  btn.addEventListener('click', () => {
+    if (GRABANDO) { detenerMic(); return; }
+    baseTexto = document.getElementById('pedidoNotas').value ? document.getElementById('pedidoNotas').value + ' ' : '';
+    GRABANDO = true;
+    btn.classList.add('grabando');
+    document.getElementById('micEstado').textContent = 'Escuchando... toca de nuevo para detener.';
+    try { RECONOCEDOR.start(); } catch (_) {}
+  });
+}
+
+function detenerMic() {
+  GRABANDO = false;
+  const btn = document.getElementById('btnMic');
+  btn.classList.remove('grabando');
+  document.getElementById('micEstado').textContent = '';
+  if (RECONOCEDOR) { try { RECONOCEDOR.stop(); } catch (_) {} }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

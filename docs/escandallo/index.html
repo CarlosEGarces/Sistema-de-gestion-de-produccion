@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Escandallo — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.margen-neg { color: var(--red); font-weight: 600; }
+.margen-ok { color: var(--green); font-weight: 600; }
+.params-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+.escalado-panel { border-top: 1px solid #F5E3EF; }
+.escalado-panel td { background: var(--pink-pale); }
+.size-btn.activo { background: var(--pink); color:#fff; border-color: var(--pink); }
+</style>
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Escandallo</div>
+  <div class="header-sub">Costos y precios sugeridos</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <div class="flex-between mt-8" style="flex-wrap:wrap; gap:8px;">
+    <a href="../home.html" class="btn btn-outline btn-sm">← Módulos</a>
+    <div class="flex gap-8" style="flex-wrap:wrap; align-items:center;">
+      <span class="hint" id="tasaBadge"></span>
+      <button class="btn btn-outline btn-sm" id="btnRefrescarTasa" title="Actualizar tasa BCV ahora" style="padding:2px 8px; line-height:1;">⟳</button>
+      <label class="hint" style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+        <input type="checkbox" id="chkMostrarBs"> Mostrar Bs.
+      </label>
+      <button class="btn btn-primary btn-sm" id="btnPortearTodo" style="display:none;">Portear todos los precios sugeridos</button>
+    </div>
+  </div>
+
+  <div class="panel mt-16" id="panelParams" style="display:none;">
+    <div class="section-title" style="padding-top:0;">Parámetros de costeo</div>
+    <div class="params-grid">
+      <div class="field"><label>Equipos ($)</label><input type="number" step="0.01" id="pEquipos"></div>
+      <div class="field"><label>Mano de obra ($)</label><input type="number" step="0.01" id="pManoObra"></div>
+      <div class="field"><label>Carga social ($)</label><input type="number" step="0.01" id="pCarga"></div>
+      <div class="field"><label>Imprevisto (%)</label><input type="number" step="0.1" id="pImprevisto"></div>
+      <div class="field"><label>Costos admin ($)</label><input type="number" step="0.01" id="pAdmin"></div>
+      <div class="field"><label>Utilidad (%)</label><input type="number" step="0.1" id="pUtilidad"></div>
+    </div>
+    <div class="hint">Precio sugerido = ((Costo MP + Equipos + Mano de obra + Carga social) × (1 + Imprevisto%) + Costos admin) × (1 + Utilidad%). El costo MP se actualiza solo cuando cambian los precios de los ingredientes.</div>
+    <button class="btn btn-primary btn-sm mt-8" id="btnGuardarParams">Guardar parámetros</button>
+  </div>
+
+  <div id="grupos"><div class="loading-state">Cargando...</div></div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const CATEGORIAS = [
+  { clave: 'torta_entera', titulo: 'Tortas Enteras' },
+  { clave: 'racion', titulo: 'Raciones' },
+  { clave: 'bebida', titulo: 'Bebidas' },
+];
+const TAMANOS = [
+  { kg: 0.25, label: '1/4 kg' }, { kg: 0.333, label: '1/3 kg' },
+  { kg: 0.5, label: '1/2 kg' }, { kg: 1, label: '1 kg' },
+];
+let PARAMS = null;
+let RECETAS = [];
+let ES_ADMIN = false;
+let TASA = null;
+let MOSTRAR_BS = false;
+let ABIERTA = null;       // receta con panel de escalado abierto
+let TAMANO_SEL = null;    // kg elegido en el panel
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  if (ctx.perfil.rol === 'trabajador') {
+    document.querySelector('.container').innerHTML = '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+  ES_ADMIN = tieneRol(ctx.perfil, ['administrador']);
+
+  const [{ data: params }, { data: tasa }] = await Promise.all([
+    supabaseClient.from('escandallo_parametros').select('*').eq('id', 1).single(),
+    supabaseClient.from('tasa_cambio').select('*').eq('id', 1).single(),
+  ]);
+  PARAMS = params;
+  TASA = tasa;
+  pintarTasa();
+  document.getElementById('chkMostrarBs').addEventListener('change', ev => {
+    MOSTRAR_BS = ev.target.checked;
+    render();
+  });
+  if (ES_ADMIN && PARAMS) {
+    document.getElementById('panelParams').style.display = '';
+    pintarParams();
+    document.getElementById('btnGuardarParams').addEventListener('click', guardarParams);
+    const btnTodo = document.getElementById('btnPortearTodo');
+    btnTodo.style.display = '';
+    btnTodo.addEventListener('click', portearTodo);
+  }
+
+  await cargarRecetas();
+}
+
+function pintarParams() {
+  document.getElementById('pEquipos').value = PARAMS.equipos;
+  document.getElementById('pManoObra').value = PARAMS.mano_obra;
+  document.getElementById('pCarga').value = PARAMS.carga_social;
+  document.getElementById('pImprevisto').value = PARAMS.imprevisto_pct;
+  document.getElementById('pAdmin').value = PARAMS.costos_admin;
+  document.getElementById('pUtilidad').value = PARAMS.utilidad_pct;
+}
+
+async function guardarParams() {
+  const nuevos = {
+    equipos: +document.getElementById('pEquipos').value,
+    mano_obra: +document.getElementById('pManoObra').value,
+    carga_social: +document.getElementById('pCarga').value,
+    imprevisto_pct: +document.getElementById('pImprevisto').value,
+    costos_admin: +document.getElementById('pAdmin').value,
+    utilidad_pct: +document.getElementById('pUtilidad').value,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabaseClient.from('escandallo_parametros').update(nuevos).eq('id', 1);
+  if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
+  PARAMS = { ...PARAMS, ...nuevos };
+  toast('Parámetros guardados');
+  render();
+}
+
+async function cargarRecetas() {
+  const { data, error } = await supabaseClient
+    .from('recetas')
+    .select('id, nombre, categoria, precio_venta, tamano_base_kg, escandallo_override, activo, detalle_receta(cantidad, es_empaque, ingredientes(costo_unitario))')
+    .eq('activo', true)
+    .order('nombre');
+
+  if (error) {
+    document.getElementById('grupos').innerHTML = `<div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div>`;
+    return;
+  }
+
+  RECETAS = data.map(r => {
+    let mp = 0, empaque = 0;
+    for (const d of (r.detalle_receta || [])) {
+      const costo = d.cantidad * (d.ingredientes?.costo_unitario || 0);
+      if (d.es_empaque) empaque += costo; else mp += costo;
+    }
+    return { ...r, costo_mp: mp, costo_empaque: empaque };
+  });
+  render();
+}
+
+function paramsDe(r) {
+  return { ...PARAMS, ...(r.escandallo_override || {}) };
+}
+
+// Escandallo: MP escala con el tamaño; empaque y gastos fijos no.
+function calcular(r, factor = 1, conEmpaque = true) {
+  const p = paramsDe(r);
+  const mp = r.costo_mp * factor + (conEmpaque ? r.costo_empaque : 0);
+  const directo = mp + (+p.equipos) + (+p.mano_obra) + (+p.carga_social);
+  const conImprevisto = directo * (1 + p.imprevisto_pct / 100);
+  const total = conImprevisto + (+p.costos_admin);
+  const sugerido = total * (1 + p.utilidad_pct / 100);
+  return { mp, total, sugerido };
+}
+
+function fmt(n) { return '$' + Number(n).toFixed(2); }
+
+function fmtBs(n) {
+  if (!TASA || !MOSTRAR_BS) return '';
+  const bs = Number(n) * Number(TASA.tasa);
+  return `<div class="hint">Bs. ${bs.toLocaleString('es-VE', { maximumFractionDigits: 2 })}</div>`;
+}
+
+function pintarTasa() {
+  const el = document.getElementById('tasaBadge');
+  if (!TASA) { el.textContent = 'Tasa BCV no disponible'; return; }
+  const fecha = new Date(TASA.actualizado_at).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' });
+  el.textContent = `Tasa BCV: Bs. ${Number(TASA.tasa).toFixed(4)} / $ (actualizada ${fecha})`;
+}
+
+document.getElementById('btnRefrescarTasa').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    TASA = await actualizarTasaBcvAhora();
+    pintarTasa();
+    render();
+    toast('Tasa BCV actualizada');
+  } catch (err) {
+    toast('No se pudo actualizar: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⟳';
+  }
+});
+
+function render() {
+  const cont = document.getElementById('grupos');
+  let html = '';
+  for (const cat of CATEGORIAS) {
+    const lista = RECETAS.filter(r => r.categoria === cat.clave);
+    if (!lista.length) continue;
+    html += `<div class="section-title mt-24">${cat.titulo}</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Receta</th><th>Tamaño</th><th>Costo MP</th><th>Empaque</th>
+          <th>Costo total</th><th>Utilidad</th><th>Precio sugerido</th><th>Precio actual</th><th>Margen</th>
+        </tr></thead>
+        <tbody>`;
+    for (const r of lista) {
+      const e = calcular(r);
+      const margen = r.precio_venta != null && e.total > 0
+        ? ((r.precio_venta - e.total) / e.total) * 100 : null;
+      const claseMargen = margen == null ? '' : (margen < 0 ? 'margen-neg' : 'margen-ok');
+      const override = r.escandallo_override?.utilidad_pct;
+      const celdaUtilidad = ES_ADMIN
+        ? `<input type="number" step="0.1" min="0" class="utilidad-input" data-id="${r.id}"
+             value="${override ?? ''}" placeholder="${PARAMS.utilidad_pct}"
+             style="width:70px; padding:4px 8px; border:1.5px solid #EED5E8; border-radius:8px; font-family:'Poppins',sans-serif;"
+             title="Vacío = usa la utilidad global (${PARAMS.utilidad_pct}%)">`
+        : `${paramsDe(r).utilidad_pct}%`;
+      html += `<tr data-id="${r.id}" class="fila-receta" style="cursor:pointer;">
+        <td class="wrap">${escapeHtml(r.nombre)}</td>
+        <td>${r.tamano_base_kg ? etiquetaTamano(r.tamano_base_kg) : '—'}</td>
+        <td>${fmt(r.costo_mp)}</td>
+        <td>${fmt(r.costo_empaque)}</td>
+        <td><strong>${fmt(e.total)}</strong>${fmtBs(e.total)}</td>
+        <td>${celdaUtilidad}</td>
+        <td>${fmt(e.sugerido)}${fmtBs(e.sugerido)}${ES_ADMIN ? ` <button class="btn btn-outline btn-sm portear-btn" data-id="${r.id}" title="Copiar este precio sugerido como precio de venta de la receta (tamaño base)">→ Portear</button>` : ''}</td>
+        <td>${r.precio_venta != null ? fmt(r.precio_venta) + fmtBs(r.precio_venta) : '—'}</td>
+        <td class="${claseMargen}">${margen == null ? '—' : margen.toFixed(0) + '%'}${margen != null && margen < 0 ? ' ⚠️' : ''}</td>
+      </tr>`;
+      if (ABIERTA === r.id) html += filaEscalado(r);
+    }
+    html += `</tbody></table></div>`;
+  }
+  cont.innerHTML = html || '<div class="empty-state">No hay recetas activas.</div>';
+
+  cont.querySelectorAll('.fila-receta').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const id = tr.dataset.id;
+      ABIERTA = ABIERTA === id ? null : id;
+      TAMANO_SEL = null;
+      render();
+    });
+  });
+  cont.querySelectorAll('.utilidad-input').forEach(inp => {
+    inp.addEventListener('click', ev => ev.stopPropagation());
+    inp.addEventListener('change', ev => guardarUtilidad(ev.target));
+  });
+  cont.querySelectorAll('.portear-btn').forEach(b => {
+    b.addEventListener('click', ev => {
+      ev.stopPropagation();
+      portearUna(b.dataset.id);
+    });
+  });
+  cont.querySelectorAll('.size-btn').forEach(b => {
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      TAMANO_SEL = +b.dataset.kg;
+      render();
+    });
+  });
+}
+
+// El porteo siempre usa el precio sugerido del TAMAÑO BASE de la receta (factor 1,
+// con empaque) — nunca un tamaño escalado en el panel de estandarización.
+async function portearUna(id) {
+  const r = RECETAS.find(x => x.id === id);
+  if (!r) return;
+  const precio = +calcular(r, 1, true).sugerido.toFixed(2);
+  const { error } = await supabaseClient
+    .from('recetas').update({ precio_venta: precio }).eq('id', id);
+  if (error) { toast('No se pudo portear: ' + error.message, 'error'); return; }
+  r.precio_venta = precio;
+  toast(`${r.nombre}: precio de venta actualizado a ${fmt(precio)}`);
+  render();
+}
+
+async function portearTodo() {
+  const cambios = RECETAS.map(r => ({ r, precio: +calcular(r, 1, true).sugerido.toFixed(2) }));
+  const distintos = cambios.filter(c => c.r.precio_venta == null || Math.abs(c.r.precio_venta - c.precio) > 0.005);
+  if (!distintos.length) { toast('Todos los precios ya coinciden con el sugerido'); return; }
+
+  const ok = window.confirm(
+    `Vas a reemplazar el precio de venta de ${distintos.length} receta(s) por su precio sugerido ` +
+    `(calculado al tamaño base de cada una, con empaque).\n\n` +
+    `Esta acción sobrescribe los precios actuales. ¿Continuar?`
+  );
+  if (!ok) return;
+
+  let fallos = 0;
+  for (const c of distintos) {
+    const { error } = await supabaseClient
+      .from('recetas').update({ precio_venta: c.precio }).eq('id', c.r.id);
+    if (error) fallos++;
+    else c.r.precio_venta = c.precio;
+  }
+  toast(fallos ? `Porteo con ${fallos} error(es); el resto se actualizó` : `${distintos.length} precio(s) actualizados`, fallos ? 'error' : 'ok');
+  render();
+}
+
+async function guardarUtilidad(inp) {
+  const id = inp.dataset.id;
+  const receta = RECETAS.find(r => r.id === id);
+  if (!receta) return;
+  const valor = inp.value.trim();
+  let override = { ...(receta.escandallo_override || {}) };
+  if (valor === '') delete override.utilidad_pct;
+  else override.utilidad_pct = +valor;
+  if (!Object.keys(override).length) override = null;
+
+  const { error } = await supabaseClient
+    .from('recetas').update({ escandallo_override: override }).eq('id', id);
+  if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
+  receta.escandallo_override = override;
+  toast(valor === '' ? 'Utilidad global restaurada' : `Utilidad de ${receta.nombre}: ${valor}%`);
+  render();
+}
+
+function etiquetaTamano(kg) {
+  const t = TAMANOS.find(t => Math.abs(t.kg - kg) < 0.01);
+  return t ? t.label : kg + ' kg';
+}
+
+function filaEscalado(r) {
+  if (!r.tamano_base_kg) {
+    return `<tr class="escalado-panel"><td colspan="9">
+      <div class="hint">Esta receta no tiene tamaño base definido, no se puede estandarizar.
+      (Se define en la receta; ej. 0.25 para 1/4 kg.)</div></td></tr>`;
+  }
+  const sel = TAMANO_SEL || r.tamano_base_kg;
+  const factor = sel / r.tamano_base_kg;
+  const con = calcular(r, factor, true);
+  const sin = calcular(r, factor, false);
+  const botones = TAMANOS.map(t =>
+    `<button class="btn btn-outline btn-sm size-btn ${Math.abs(t.kg - sel) < 0.01 ? 'activo' : ''}" data-kg="${t.kg}">${t.label}</button>`
+  ).join(' ');
+  return `<tr class="escalado-panel"><td colspan="9">
+    <div class="flex gap-8" style="flex-wrap:wrap; margin-bottom:10px;">
+      <span class="hint" style="align-self:center;">Estandarizar a:</span> ${botones}
+      <span class="hint" style="align-self:center;">(base: ${etiquetaTamano(r.tamano_base_kg)}, factor ×${factor.toFixed(2)})</span>
+    </div>
+    <div class="params-grid">
+      <div><div class="hint">Costo MP escalado</div><strong>${fmt(r.costo_mp * factor)}</strong>${fmtBs(r.costo_mp * factor)}</div>
+      <div><div class="hint">Costo total sin empaque</div><strong>${fmt(sin.total)}</strong>${fmtBs(sin.total)}</div>
+      <div><div class="hint">Costo total con empaque</div><strong>${fmt(con.total)}</strong>${fmtBs(con.total)}</div>
+      <div><div class="hint">Sugerido sin empaque</div><strong>${fmt(sin.sugerido)}</strong>${fmtBs(sin.sugerido)}</div>
+      <div><div class="hint">Sugerido con empaque</div><strong>${fmt(con.sugerido)}</strong>${fmtBs(con.sugerido)}</div>
+    </div>
+    <div class="hint mt-8">El empaque no escala con el tamaño (misma caja/plato). Los ingredientes escalan por regla de tres.
+    El botón "→ Portear" siempre copia el precio del <strong>tamaño base</strong> — los tamaños escalados son solo de consulta.</div>
+  </td></tr>`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

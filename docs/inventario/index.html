@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inventario — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.badge-warn { background:#FFF6DF; color:#8A6400; }
+.badge-revertido { background:#F2F2F2; color:#888; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Inventario</div>
+  <div class="header-sub">Productos terminados y materia prima</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <a href="../home.html" class="btn btn-outline btn-sm">← Módulos</a>
+
+  <div class="tabs mt-16">
+    <button class="tab-btn activo" data-tab="terminados">Productos Terminados</button>
+    <button class="tab-btn" data-tab="materia" id="tabBtnMateria">Materia Prima</button>
+    <button class="tab-btn" data-tab="masivos" id="tabBtnMasivos">Movimientos Masivos</button>
+    <button class="tab-btn" data-tab="transferencias" id="tabBtnTransferencias">Transferencias</button>
+  </div>
+
+  <!-- ── PRODUCTOS TERMINADOS ── -->
+  <div id="tabTerminados">
+    <div class="flex-between" style="flex-wrap:wrap; gap:8px;">
+      <div class="hint">Umbral de alerta por defecto: <strong id="umbralGlobal">—</strong> días en exhibición.</div>
+      <button class="btn btn-primary btn-sm" id="btnNuevoLote" style="display:none;">+ Nuevo lote</button>
+    </div>
+
+    <div class="panel mt-16" id="formLotePanel" style="display:none;">
+      <div class="section-title" style="padding-top:0;">Nuevo lote</div>
+      <form id="formLote">
+        <div class="field-row">
+          <div class="field">
+            <label>Receta</label>
+            <select id="loteReceta" required></select>
+          </div>
+          <div class="field">
+            <label>Sede</label>
+            <select id="loteSede" required>
+              <option value="Orinokia">CC Orinokia Mall</option>
+              <option value="VillaAlianza">Villa Alianza</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>Cantidad</label>
+            <input type="number" id="loteCantidad" min="1" step="1" required>
+          </div>
+          <div class="field">
+            <label>Fecha de ingreso</label>
+            <input type="date" id="loteFecha" required>
+          </div>
+        </div>
+        <div class="flex gap-8 mt-16">
+          <button type="submit" class="btn btn-primary">Guardar</button>
+          <button type="button" class="btn btn-outline" id="btnCancelarLote">Cancelar</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="table-wrap mt-16">
+      <table>
+        <thead><tr>
+          <th>Receta</th><th>Sede</th><th>Cantidad</th><th>Fecha ingreso</th>
+          <th>Días en exhibición</th><th>Estado</th><th></th><th></th>
+        </tr></thead>
+        <tbody id="tbodyLotes">
+          <tr><td colspan="8"><div class="loading-state">Cargando...</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── MATERIA PRIMA ── -->
+  <div id="tabMateria" style="display:none;">
+    <div class="flex-between" style="flex-wrap:wrap; gap:8px;">
+      <div class="hint">El stock se actualiza solo con cada movimiento registrado.</div>
+      <div class="flex gap-8">
+        <a href="carga_masiva.html" class="btn btn-outline btn-sm" id="btnCargaMasiva" style="display:none;">Carga masiva</a>
+        <button class="btn btn-primary btn-sm" id="btnNuevoMov" style="display:none;">+ Registrar movimiento</button>
+      </div>
+    </div>
+
+    <div class="field mt-16" style="max-width:320px;">
+      <input type="text" id="buscarIngrediente" placeholder="Buscar ingrediente...">
+    </div>
+
+    <div id="gruposMateria" class="mt-16"><div class="loading-state">Cargando...</div></div>
+  </div>
+
+  <!-- ── MOVIMIENTOS MASIVOS ── -->
+  <div id="tabMasivos" style="display:none;">
+    <div class="hint">Todos los movimientos creados por "Carga masiva", con la opción de deshacer cada uno individualmente.</div>
+    <div class="table-wrap mt-16">
+      <table>
+        <thead><tr>
+          <th>Fecha</th><th>Ingrediente</th><th>Cantidad</th><th>Motivo</th><th>Estado</th><th></th>
+        </tr></thead>
+        <tbody id="tbodyMasivos">
+          <tr><td colspan="6"><div class="loading-state">Cargando...</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── TRANSFERENCIAS ENTRE SEDES ── -->
+  <div id="tabTransferencias" style="display:none;">
+    <div class="hint">Historial de productos enviados de una sede a otra. El envío se hace desde la pestaña "Productos Terminados", botón "Enviar" en cada lote.</div>
+    <div class="table-wrap mt-16">
+      <table>
+        <thead><tr>
+          <th>Fecha</th><th>Receta</th><th>Cantidad</th><th>De</th><th>A</th><th>Por</th>
+        </tr></thead>
+        <tbody id="tbodyTransferencias">
+          <tr><td colspan="6"><div class="loading-state">Cargando...</div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── MODAL: ENVIAR A OTRA SEDE ── -->
+<div class="modal-backdrop" id="modalEnvio" style="display:none;">
+  <div class="modal-card">
+    <button type="button" class="modal-close" id="btnCerrarModalEnvio">✕</button>
+    <div class="section-title" style="padding-top:0;">Enviar a otra sede</div>
+    <p class="hint" id="envioOrigenTexto"></p>
+    <form id="formEnvio">
+      <div class="field">
+        <label>Cantidad a enviar</label>
+        <input type="number" id="envioCantidad" min="1" step="1" required>
+      </div>
+      <div class="hint">La fecha de fabricación no cambia al viajar — el reloj de vencimiento sigue contando desde que se hizo.</div>
+      <div class="flex gap-8 mt-16">
+        <button type="submit" class="btn btn-primary">Confirmar envío</button>
+        <button type="button" class="btn btn-outline" id="btnCancelarEnvio">Cancelar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── MODAL: NUEVO MOVIMIENTO ── -->
+<div class="modal-backdrop" id="modalMov" style="display:none;">
+  <div class="modal-card">
+    <button type="button" class="modal-close" id="btnCerrarModalMov">✕</button>
+    <div class="section-title" style="padding-top:0;">Nuevo movimiento</div>
+    <form id="formMov">
+      <div class="field">
+        <label>Ingrediente</label>
+        <select id="movIngrediente" required></select>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Tipo</label>
+          <select id="movTipo" required>
+            <option value="entrada">Entrada (compra)</option>
+            <option value="salida">Salida (consumo/merma)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Cantidad</label>
+          <input type="number" id="movCantidad" min="0" step="0.0001" required>
+        </div>
+      </div>
+      <div class="field">
+        <label>Motivo (opcional)</label>
+        <input type="text" id="movMotivo" placeholder="Ej: compra semanal, merma por vencimiento...">
+      </div>
+      <div class="flex gap-8 mt-16">
+        <button type="submit" class="btn btn-primary">Guardar</button>
+        <button type="button" class="btn btn-outline" id="btnCancelarMov">Cancelar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+let PERFIL = null;
+let SESSION = null;
+let PUEDE_ESCRIBIR = false;
+let ES_TRABAJADOR = false;
+let RECETAS = [];
+let LOTES = [];
+let INGREDIENTES = [];
+let PARAMS_INV = null;
+let MOV_ABIERTO = null; // ingrediente con historial de movimientos abierto
+let FILTRO_ING = '';
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  PERFIL = ctx.perfil;
+  pintarUsuario(PERFIL, 'userBox');
+  PUEDE_ESCRIBIR = tieneRol(PERFIL, ['administrador', 'produccion', 'inventario']);
+  ES_TRABAJADOR = PERFIL.rol === 'trabajador';
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  SESSION = session;
+
+  document.getElementById('btnNuevoLote').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+  document.getElementById('btnNuevoMov').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+  document.getElementById('btnCargaMasiva').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+  if (ES_TRABAJADOR) {
+    document.getElementById('tabBtnMasivos').style.display = 'none';
+    document.getElementById('tabBtnTransferencias').style.display = 'none';
+  }
+  if (ES_TRABAJADOR && PERFIL.sede === 'Orinokia') {
+    document.getElementById('tabBtnMateria').style.display = 'none';
+  }
+  document.getElementById('loteFecha').value = new Date().toISOString().slice(0, 10);
+
+  document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => cambiarTab(b.dataset.tab)));
+
+  const { data: params } = await supabaseClient.from('inventario_parametros').select('*').eq('id', 1).single();
+  PARAMS_INV = params;
+  document.getElementById('umbralGlobal').textContent = PARAMS_INV?.dias_alerta_exhibicion ?? '—';
+
+  await Promise.all([cargarRecetasParaSelect(), cargarLotes(), cargarIngredientes()]);
+  verificarAlertasInventario(PERFIL);
+}
+
+function cambiarTab(tab) {
+  if (ES_TRABAJADOR && (tab === 'masivos' || tab === 'transferencias')) return;
+  if (ES_TRABAJADOR && tab === 'materia' && PERFIL.sede === 'Orinokia') return;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('activo', b.dataset.tab === tab));
+  document.getElementById('tabTerminados').style.display = tab === 'terminados' ? '' : 'none';
+  document.getElementById('tabMateria').style.display = tab === 'materia' ? '' : 'none';
+  document.getElementById('tabMasivos').style.display = tab === 'masivos' ? '' : 'none';
+  document.getElementById('tabTransferencias').style.display = tab === 'transferencias' ? '' : 'none';
+  if (tab === 'masivos') cargarMovimientosMasivos();
+  if (tab === 'transferencias') cargarTransferencias();
+}
+
+/* ── PRODUCTOS TERMINADOS ── */
+
+async function cargarRecetasParaSelect() {
+  const { data } = await supabaseClient.from('recetas').select('id, nombre, dias_alerta_exhibicion').eq('activo', true).order('nombre');
+  RECETAS = data || [];
+  document.getElementById('loteReceta').innerHTML = RECETAS.map(r => `<option value="${r.id}">${escapeHtml(r.nombre)}</option>`).join('');
+}
+
+async function cargarLotes() {
+  const tbody = document.getElementById('tbodyLotes');
+  const { data, error } = await supabaseClient
+    .from('lotes')
+    .select('id, cantidad, sede, fecha_ingreso, recetas(nombre, dias_alerta_exhibicion)')
+    .is('retirado_at', null)
+    .order('fecha_ingreso');
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+  LOTES = data || [];
+  renderLotes();
+}
+
+function renderLotes() {
+  const tbody = document.getElementById('tbodyLotes');
+  if (!LOTES.length) {
+    tbody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No hay lotes en exhibición.</div></td></tr>`;
+    return;
+  }
+  const hoy = new Date();
+  const diasDefault = PARAMS_INV?.dias_alerta_exhibicion ?? 3;
+
+  tbody.innerHTML = LOTES.map(l => {
+    const dias = Math.floor((hoy - new Date(l.fecha_ingreso + 'T00:00:00')) / 86400000);
+    const umbral = l.recetas?.dias_alerta_exhibicion ?? diasDefault;
+    let badge = '<span class="badge badge-ok">Normal</span>';
+    if (dias >= umbral * 2) badge = '<span class="badge" style="background:#FDEAEA;color:var(--red);">Crítico ⚠️</span>';
+    else if (dias >= umbral) badge = '<span class="badge badge-warn">Alerta</span>';
+
+    return `<tr>
+      <td class="wrap">${escapeHtml(l.recetas?.nombre || '—')}</td>
+      <td>${l.sede === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}</td>
+      <td>${l.cantidad}</td>
+      <td>${l.fecha_ingreso}</td>
+      <td>${dias} día(s) <span class="hint">(umbral ${umbral})</span></td>
+      <td>${badge}</td>
+      <td>${PUEDE_ESCRIBIR ? `<button class="btn btn-outline btn-sm" onclick="retirarLote('${l.id}')">Retirar</button>` : ''}</td>
+      <td>${PUEDE_ESCRIBIR ? `<button class="btn btn-outline btn-sm" onclick="abrirModalEnvio('${l.id}')">Enviar</button>` : ''}</td>
+    </tr>`;
+  }).join('');
+}
+
+document.getElementById('btnNuevoLote').addEventListener('click', () => {
+  document.getElementById('formLotePanel').style.display = '';
+});
+document.getElementById('btnCancelarLote').addEventListener('click', () => {
+  document.getElementById('formLotePanel').style.display = 'none';
+});
+
+document.getElementById('formLote').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    receta_id: document.getElementById('loteReceta').value,
+    sede: document.getElementById('loteSede').value,
+    cantidad: parseInt(document.getElementById('loteCantidad').value, 10),
+    fecha_ingreso: document.getElementById('loteFecha').value,
+    created_by: SESSION.user.id,
+  };
+  const { error } = await supabaseClient.from('lotes').insert(payload);
+  if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
+  toast('Lote registrado');
+  document.getElementById('formLotePanel').style.display = 'none';
+  document.getElementById('formLote').reset();
+  document.getElementById('loteFecha').value = new Date().toISOString().slice(0, 10);
+  await cargarLotes();
+});
+
+async function retirarLote(id) {
+  const { error } = await supabaseClient
+    .from('lotes').update({ retirado_at: new Date().toISOString(), motivo_retiro: 'vendido' }).eq('id', id);
+  if (error) { toast('No se pudo retirar: ' + error.message, 'error'); return; }
+  toast('Lote retirado de exhibición');
+  await cargarLotes();
+}
+
+/* ── ENVIAR PRODUCTO A OTRA SEDE ── */
+
+let ENVIO_LOTE = null;
+const OTRA_SEDE = { Orinokia: 'VillaAlianza', VillaAlianza: 'Orinokia' };
+
+function abrirModalEnvio(loteId) {
+  const lote = LOTES.find(l => l.id === loteId);
+  if (!lote) return;
+  ENVIO_LOTE = lote;
+  const destino = OTRA_SEDE[lote.sede];
+  document.getElementById('envioOrigenTexto').textContent =
+    `${lote.recetas?.nombre || 'Producto'}: hay ${lote.cantidad} en ${lote.sede === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}. ` +
+    `Se enviará a ${destino === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}.`;
+  document.getElementById('envioCantidad').max = lote.cantidad;
+  document.getElementById('envioCantidad').value = lote.cantidad;
+  document.getElementById('modalEnvio').style.display = 'flex';
+}
+
+function cerrarModalEnvio() {
+  document.getElementById('modalEnvio').style.display = 'none';
+  ENVIO_LOTE = null;
+}
+document.getElementById('btnCancelarEnvio').addEventListener('click', cerrarModalEnvio);
+document.getElementById('btnCerrarModalEnvio').addEventListener('click', cerrarModalEnvio);
+document.getElementById('modalEnvio').addEventListener('click', (e) => {
+  if (e.target.id === 'modalEnvio') cerrarModalEnvio();
+});
+
+document.getElementById('formEnvio').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!ENVIO_LOTE) return;
+  const cantidad = parseInt(document.getElementById('envioCantidad').value, 10);
+  const destino = OTRA_SEDE[ENVIO_LOTE.sede];
+
+  const ok = window.confirm(
+    `¿Enviar ${cantidad} de "${ENVIO_LOTE.recetas?.nombre || 'producto'}" desde ` +
+    `${ENVIO_LOTE.sede === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'} hacia ` +
+    `${destino === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}?`
+  );
+  if (!ok) return;
+
+  const { error } = await supabaseClient.rpc('transferir_producto', {
+    p_lote_origen_id: ENVIO_LOTE.id,
+    p_cantidad: cantidad,
+    p_sede_destino: destino,
+  });
+  if (error) { toast('No se pudo enviar: ' + error.message, 'error'); return; }
+
+  toast('Producto enviado');
+  cerrarModalEnvio();
+  await cargarLotes();
+});
+
+async function cargarTransferencias() {
+  const tbody = document.getElementById('tbodyTransferencias');
+  const { data, error } = await supabaseClient
+    .from('transferencias_productos')
+    .select('created_at, cantidad, sede_origen, sede_destino, recetas(nombre), perfiles(nombre)')
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">Todavía no se ha enviado ningún producto entre sedes.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = data.map(t => `
+    <tr>
+      <td>${new Date(t.created_at).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}</td>
+      <td class="wrap">${escapeHtml(t.recetas?.nombre || '—')}</td>
+      <td>${t.cantidad}</td>
+      <td>${t.sede_origen === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}</td>
+      <td>${t.sede_destino === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}</td>
+      <td class="wrap">${escapeHtml(t.perfiles?.nombre || '—')}</td>
+    </tr>
+  `).join('');
+}
+
+/* ── MATERIA PRIMA ── */
+
+const CATEGORIA_LABEL = { materia_prima: 'Materia Prima', empaque: 'Empaque' };
+const ESTADO_FISICO_LABEL = { liquido: 'Líquida', solido: 'Sólida' };
+
+async function cargarIngredientes() {
+  const cont = document.getElementById('gruposMateria');
+  const { data, error } = await supabaseClient
+    .from('ingredientes')
+    .select('id, nombre, unidad_medida, categoria, estado_fisico, stock_actual, stock_minimo')
+    .eq('activo', true)
+    .order('nombre');
+
+  if (error) {
+    cont.innerHTML = `<div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  INGREDIENTES = data || [];
+  document.getElementById('movIngrediente').innerHTML = INGREDIENTES.map(i => `<option value="${i.id}">${escapeHtml(i.nombre)} (${i.unidad_medida})</option>`).join('');
+  renderMateria();
+}
+
+function filaMateria(i) {
+  const bajoMinimo = i.stock_minimo != null && Number(i.stock_actual) <= Number(i.stock_minimo);
+  const badge = bajoMinimo
+    ? '<span class="badge" style="background:#FDEAEA;color:var(--red);">Bajo mínimo ⚠️</span>'
+    : '<span class="badge badge-ok">Normal</span>';
+  const inputMin = PUEDE_ESCRIBIR
+    ? `<input type="number" step="0.0001" min="0" class="stock-min-input" data-id="${i.id}" value="${i.stock_minimo ?? ''}"
+         placeholder="sin definir"
+         style="width:100px; padding:4px 8px; border:1.5px solid #EED5E8; border-radius:8px; font-family:'Poppins',sans-serif;">`
+    : (i.stock_minimo ?? '—');
+
+  return `<tr data-mov="${i.id}">
+    <td class="wrap">${escapeHtml(i.nombre)}</td>
+    <td>${Number(i.stock_actual).toLocaleString('es-VE', { maximumFractionDigits: 4 })} ${escapeHtml(i.unidad_medida)}</td>
+    <td>${inputMin}</td>
+    <td>${badge}</td>
+    <td class="flex gap-8">
+      ${PUEDE_ESCRIBIR ? `<button class="btn btn-outline btn-sm mov-item-btn" data-id="${i.id}">+ Movimiento</button>` : ''}
+      <button class="btn btn-outline btn-sm toggle-mov-btn" data-id="${i.id}">${MOV_ABIERTO === i.id ? '▴ Historial' : '▾ Historial'}</button>
+    </td>
+  </tr>` + (MOV_ABIERTO === i.id ? `<tr><td colspan="5" style="background:var(--pink-pale);"><div id="histMov-${i.id}" class="loading-state">Cargando historial...</div></td></tr>` : '');
+}
+
+function renderMateria() {
+  const cont = document.getElementById('gruposMateria');
+  const lista = FILTRO_ING
+    ? INGREDIENTES.filter(i => i.nombre.toLowerCase().includes(FILTRO_ING))
+    : INGREDIENTES;
+
+  if (!lista.length) {
+    cont.innerHTML = `<div class="empty-state">No hay ingredientes que coincidan.</div>`;
+    return;
+  }
+
+  let html = '';
+  const materiaPrima = lista.filter(i => (i.categoria || 'materia_prima') === 'materia_prima');
+  for (const estado of ['liquido', 'solido']) {
+    const grupo = materiaPrima.filter(i => (i.estado_fisico || 'solido') === estado);
+    if (!grupo.length) continue;
+    html += tablaGrupo(`Materia Prima — ${ESTADO_FISICO_LABEL[estado]}`, grupo);
+  }
+  const empaque = lista.filter(i => i.categoria === 'empaque');
+  if (empaque.length) html += tablaGrupo(CATEGORIA_LABEL.empaque, empaque);
+
+  cont.innerHTML = html;
+
+  cont.querySelectorAll('.stock-min-input').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const id = inp.dataset.id;
+      const valor = inp.value.trim();
+      const { error } = await supabaseClient
+        .from('ingredientes').update({ stock_minimo: valor === '' ? null : +valor }).eq('id', id);
+      if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
+      toast('Stock mínimo actualizado');
+      await cargarIngredientes();
+    });
+  });
+  cont.querySelectorAll('.toggle-mov-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      const id = b.dataset.id;
+      MOV_ABIERTO = MOV_ABIERTO === id ? null : id;
+      renderMateria();
+      if (MOV_ABIERTO === id) cargarHistorialMovimientos(id);
+    });
+  });
+  cont.querySelectorAll('.mov-item-btn').forEach(b => {
+    b.addEventListener('click', () => abrirModalMov(b.dataset.id));
+  });
+}
+
+function tablaGrupo(titulo, grupo) {
+  return `<div class="section-title mt-24">${titulo}</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Ingrediente</th><th>Stock actual</th><th>Stock mínimo</th><th>Estado</th><th></th>
+      </tr></thead>
+      <tbody>${grupo.map(filaMateria).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+async function cargarHistorialMovimientos(ingredienteId) {
+  const cont = document.getElementById(`histMov-${ingredienteId}`);
+  const { data, error } = await supabaseClient
+    .from('movimientos_inventario')
+    .select('id, tipo, cantidad, motivo, created_at, origen, revertido_por')
+    .eq('ingrediente_id', ingredienteId)
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  if (!cont) return;
+  if (error) { cont.innerHTML = `<div class="empty-state">Error: ${escapeHtml(error.message)}</div>`; return; }
+  if (!data.length) { cont.innerHTML = `<div class="empty-state">Sin movimientos registrados.</div>`; return; }
+
+  cont.innerHTML = `<div class="hint mt-8" style="margin-bottom:6px;">Últimos ${data.length} movimiento(s):</div>
+  <table style="font-size:12px; max-width:560px;">
+    <thead><tr><th>Fecha</th><th>Tipo</th><th>Cantidad</th><th>Motivo</th><th></th></tr></thead>
+    <tbody>${data.map(filaHistorial).join('')}</tbody>
+  </table>`;
+
+  cont.querySelectorAll('.revertir-btn').forEach(b => {
+    b.addEventListener('click', () => revertirMovimiento(b.dataset.id, () => cargarHistorialMovimientos(ingredienteId)));
+  });
+}
+
+function filaHistorial(m) {
+  const yaRevertido = m.revertido_por != null;
+  const esReversion = m.origen === 'reversion';
+  return `<tr>
+    <td>${new Date(m.created_at).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}</td>
+    <td>${m.tipo === 'entrada' ? '⬇️ Entrada' : '⬆️ Salida'}${esReversion ? ' <span class="hint">(reversión)</span>' : ''}</td>
+    <td>${m.cantidad}</td>
+    <td class="wrap">${escapeHtml(m.motivo || '—')}</td>
+    <td>${yaRevertido
+        ? '<span class="badge badge-revertido">Revertido</span>'
+        : (PUEDE_ESCRIBIR ? `<button class="btn btn-outline btn-sm revertir-btn" data-id="${m.id}">Revertir</button>` : '')}</td>
+  </tr>`;
+}
+
+/* ── MODAL DE MOVIMIENTO (reutilizado por el botón general y por cada fila) ── */
+
+function abrirModalMov(ingredienteId) {
+  const sel = document.getElementById('movIngrediente');
+  if (ingredienteId) {
+    sel.value = ingredienteId;
+    sel.disabled = true;
+  } else {
+    sel.disabled = false;
+  }
+  document.getElementById('modalMov').style.display = 'flex';
+}
+
+function cerrarModalMov() {
+  document.getElementById('modalMov').style.display = 'none';
+  document.getElementById('formMov').reset();
+  document.getElementById('movIngrediente').disabled = false;
+}
+
+document.getElementById('btnNuevoMov').addEventListener('click', () => {
+  const modal = document.getElementById('modalMov');
+  if (modal.style.display === 'flex' && !document.getElementById('movIngrediente').disabled) {
+    cerrarModalMov();
+  } else {
+    abrirModalMov(null);
+  }
+});
+document.getElementById('btnCancelarMov').addEventListener('click', cerrarModalMov);
+document.getElementById('btnCerrarModalMov').addEventListener('click', cerrarModalMov);
+document.getElementById('modalMov').addEventListener('click', (e) => {
+  if (e.target.id === 'modalMov') cerrarModalMov();
+});
+
+document.getElementById('formMov').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    ingrediente_id: document.getElementById('movIngrediente').value,
+    tipo: document.getElementById('movTipo').value,
+    cantidad: parseFloat(document.getElementById('movCantidad').value),
+    motivo: document.getElementById('movMotivo').value.trim() || null,
+    origen: 'manual',
+    created_by: SESSION.user.id,
+  };
+  const { error } = await supabaseClient.from('movimientos_inventario').insert(payload);
+  if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
+  const fecha = new Date().toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' });
+  toast(`Movimiento registrado (${fecha})`);
+  cerrarModalMov();
+  await cargarIngredientes();
+});
+
+document.getElementById('buscarIngrediente').addEventListener('input', (e) => {
+  FILTRO_ING = e.target.value.trim().toLowerCase();
+  renderMateria();
+});
+
+/* ── REVERSIÓN DE MOVIMIENTOS ── */
+
+async function revertirMovimiento(id, callbackRefrescar) {
+  const { data: original, error: errOriginal } = await supabaseClient
+    .from('movimientos_inventario').select('*').eq('id', id).single();
+  if (errOriginal || !original) { toast('No se pudo cargar el movimiento', 'error'); return; }
+  if (original.revertido_por) { toast('Ese movimiento ya fue revertido'); return; }
+
+  const ok = window.confirm(
+    `¿Seguro que quieres deshacer este movimiento?\n\n` +
+    `${original.tipo === 'entrada' ? 'Entrada' : 'Salida'} de ${original.cantidad} registrada el ` +
+    `${new Date(original.created_at).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}.\n\n` +
+    `Esto crea un movimiento contrario para dejar el stock como estaba; no borra el historial original.`
+  );
+  if (!ok) return;
+
+  const { data: reversion, error: errRev } = await supabaseClient.from('movimientos_inventario').insert({
+    ingrediente_id: original.ingrediente_id,
+    tipo: original.tipo === 'entrada' ? 'salida' : 'entrada',
+    cantidad: original.cantidad,
+    motivo: `Reversión del movimiento del ${new Date(original.created_at).toLocaleDateString('es-VE')}`,
+    origen: 'reversion',
+    movimiento_original_id: original.id,
+    created_by: SESSION.user.id,
+  }).select('id').single();
+  if (errRev) { toast('No se pudo revertir: ' + errRev.message, 'error'); return; }
+
+  const { error: errUpdate } = await supabaseClient
+    .from('movimientos_inventario').update({ revertido_por: reversion.id }).eq('id', original.id);
+  if (errUpdate) { toast('Se revirtió, pero no se pudo marcar el original: ' + errUpdate.message, 'error'); }
+
+  toast('Movimiento revertido');
+  await cargarIngredientes();
+  if (callbackRefrescar) await callbackRefrescar();
+}
+
+/* ── MOVIMIENTOS MASIVOS ── */
+
+async function cargarMovimientosMasivos() {
+  const tbody = document.getElementById('tbodyMasivos');
+  const { data, error } = await supabaseClient
+    .from('movimientos_inventario')
+    .select('id, tipo, cantidad, motivo, created_at, revertido_por, ingredientes(nombre)')
+    .eq('origen', 'masivo')
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No se ha hecho ninguna carga masiva todavía.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = data.map(m => {
+    const yaRevertido = m.revertido_por != null;
+    return `<tr>
+      <td>${new Date(m.created_at).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}</td>
+      <td class="wrap">${escapeHtml(m.ingredientes?.nombre || '—')}</td>
+      <td>${m.tipo === 'entrada' ? '⬇️' : '⬆️'} ${m.cantidad}</td>
+      <td class="wrap">${escapeHtml(m.motivo || '—')}</td>
+      <td>${yaRevertido ? '<span class="badge badge-revertido">Revertido</span>' : '<span class="badge badge-ok">Vigente</span>'}</td>
+      <td>${!yaRevertido && PUEDE_ESCRIBIR ? `<button class="btn btn-outline btn-sm revertir-masivo-btn" data-id="${m.id}">Revertir</button>` : ''}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('.revertir-masivo-btn').forEach(b => {
+    b.addEventListener('click', () => revertirMovimiento(b.dataset.id, cargarMovimientosMasivos));
+  });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

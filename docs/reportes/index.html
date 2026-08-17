@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reportes — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.margen-neg { color: var(--red); font-weight: 600; }
+.margen-ok { color: var(--green); font-weight: 600; }
+.periodo-btn.activo { background: var(--pink); color:#fff; border-color: var(--pink); }
+.periodo-btn-rot.activo { background: var(--pink); color:#fff; border-color: var(--pink); }
+.periodo-btn-fin.activo { background: var(--pink); color:#fff; border-color: var(--pink); }
+.reporte-titulo { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; }
+.valor-grande { font-family:'Bodoni Moda',serif; font-size:26px; font-weight:700; color:var(--pink-dark); margin-top:4px; }
+@media print {
+  .header, .no-print { display:none !important; }
+  body { background:#fff; padding:0; }
+  .panel, .table-wrap { box-shadow:none; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Reportes</div>
+  <div class="header-sub">Antojito's Cakes</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <a href="../home.html" class="btn btn-outline btn-sm no-print">← Módulos</a>
+
+  <div class="tabs mt-16 no-print">
+    <button class="tab-btn activo" data-tab="rentabilidad">Rentabilidad por Receta</button>
+    <button class="tab-btn" data-tab="consumo">Consumo de Materia Prima</button>
+    <button class="tab-btn" data-tab="rotacion">Rotación de Productos</button>
+    <button class="tab-btn" data-tab="finanzas" id="tabBtnFinanzas" style="display:none;">Gastos vs Ventas</button>
+  </div>
+
+  <!-- ── RENTABILIDAD POR RECETA ── -->
+  <div id="tabRentabilidad">
+    <div class="reporte-titulo mt-16">
+      <div>
+        <div class="section-title" style="padding-top:0;">Rentabilidad por receta</div>
+        <div class="hint">Costo y precio actuales (no depende de un periodo). Ordenado de peor a mejor margen.</div>
+      </div>
+      <div class="flex gap-8 no-print">
+        <select id="filtroCategoriaRent" class="mini-input" style="width:160px;">
+          <option value="">Todas las categorías</option>
+          <option value="torta_entera">Tortas Enteras</option>
+          <option value="racion">Raciones</option>
+          <option value="bebida">Bebidas</option>
+        </select>
+        <button class="btn btn-outline btn-sm" onclick="window.print()">🖨 Descargar PDF</button>
+      </div>
+    </div>
+    <div class="table-wrap mt-16">
+      <table>
+        <thead><tr><th>Receta</th><th>Categoría</th><th>Costo base</th><th>Precio venta</th><th>Margen</th></tr></thead>
+        <tbody id="tbodyRentabilidad"><tr><td colspan="5"><div class="loading-state">Cargando...</div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── CONSUMO DE MATERIA PRIMA ── -->
+  <div id="tabConsumo" style="display:none;">
+    <div class="reporte-titulo mt-16">
+      <div>
+        <div class="section-title" style="padding-top:0;">Consumo de materia prima</div>
+        <div class="hint" id="periodoConsumoTexto"></div>
+      </div>
+      <div class="flex gap-8 no-print" style="flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-outline btn-sm periodo-btn" data-periodo="7">Últimos 7 días</button>
+        <button class="btn btn-outline btn-sm periodo-btn activo" data-periodo="30">Últimos 30 días</button>
+        <button class="btn btn-outline btn-sm periodo-btn" data-periodo="mes">Mes actual</button>
+        <input type="date" id="consumoDesde" class="mini-input">
+        <span class="hint">a</span>
+        <input type="date" id="consumoHasta" class="mini-input">
+        <button class="btn btn-outline btn-sm" onclick="window.print()">🖨 Descargar PDF</button>
+      </div>
+    </div>
+    <div class="table-wrap mt-16">
+      <table>
+        <thead><tr><th>Ingrediente</th><th>Unidad</th><th>Cantidad consumida</th><th>Valor consumido</th><th>Movimientos</th></tr></thead>
+        <tbody id="tbodyConsumo"><tr><td colspan="5"><div class="loading-state">Cargando...</div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── ROTACIÓN DE PRODUCTOS TERMINADOS ── -->
+  <div id="tabRotacion" style="display:none;">
+    <div class="reporte-titulo mt-16">
+      <div>
+        <div class="section-title" style="padding-top:0;">Rotación de productos terminados</div>
+        <div class="hint" id="periodoRotacionTexto"></div>
+      </div>
+      <div class="flex gap-8 no-print" style="flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-outline btn-sm periodo-btn-rot" data-periodo="7">Últimos 7 días</button>
+        <button class="btn btn-outline btn-sm periodo-btn-rot activo" data-periodo="30">Últimos 30 días</button>
+        <button class="btn btn-outline btn-sm periodo-btn-rot" data-periodo="mes">Mes actual</button>
+        <input type="date" id="rotacionDesde" class="mini-input">
+        <span class="hint">a</span>
+        <input type="date" id="rotacionHasta" class="mini-input">
+        <button class="btn btn-outline btn-sm" onclick="window.print()">🖨 Descargar PDF</button>
+      </div>
+    </div>
+    <div class="hint mt-8">Solo incluye lotes ya retirados de exhibición en el periodo (para calcular cuánto tardaron en salir).</div>
+    <div class="table-wrap mt-16">
+      <table>
+        <thead><tr><th>Receta</th><th>Lotes retirados</th><th>Días promedio en exhibición</th><th>Alertas de vencimiento</th></tr></thead>
+        <tbody id="tbodyRotacion"><tr><td colspan="4"><div class="loading-state">Cargando...</div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── GASTOS VS VENTAS (solo admin) ── -->
+  <div id="tabFinanzas" style="display:none;">
+    <div class="reporte-titulo mt-16">
+      <div>
+        <div class="section-title" style="padding-top:0;">Gastos vs Ventas</div>
+        <div class="hint" id="periodoFinanzasTexto"></div>
+      </div>
+      <div class="flex gap-8 no-print" style="flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-outline btn-sm periodo-btn-fin" data-periodo="7">Últimos 7 días</button>
+        <button class="btn btn-outline btn-sm periodo-btn-fin activo" data-periodo="30">Últimos 30 días</button>
+        <button class="btn btn-outline btn-sm periodo-btn-fin" data-periodo="mes">Mes actual</button>
+        <input type="date" id="finanzasDesde" class="mini-input">
+        <span class="hint">a</span>
+        <input type="date" id="finanzasHasta" class="mini-input">
+        <button class="btn btn-outline btn-sm" onclick="window.print()">🖨 Descargar PDF</button>
+      </div>
+    </div>
+    <div class="hint mt-8">
+      Ventas: lotes marcados como "vendido" en el periodo, a precio de venta actual. Gastos: producción cargada a Inventario en el periodo, a costo base actual.
+      Ambos son aproximaciones con el precio/costo de hoy, no el histórico exacto del momento.
+    </div>
+
+    <div class="flex gap-16 mt-16" style="flex-wrap:wrap;">
+      <div class="panel" style="flex:1; min-width:160px;">
+        <div class="hint">Ventas</div>
+        <div class="valor-grande" id="finVentasTotal">—</div>
+      </div>
+      <div class="panel" style="flex:1; min-width:160px;">
+        <div class="hint">Gastos de producción</div>
+        <div class="valor-grande" id="finGastosTotal">—</div>
+      </div>
+      <div class="panel" style="flex:1; min-width:160px;">
+        <div class="hint">Margen</div>
+        <div class="valor-grande" id="finMargenTotal">—</div>
+      </div>
+    </div>
+
+    <div class="table-wrap mt-16">
+      <table>
+        <thead><tr>
+          <th>Receta</th><th>Unidades vendidas</th><th>Ventas</th>
+          <th>Unidades producidas</th><th>Gastos</th><th>Margen</th>
+        </tr></thead>
+        <tbody id="tbodyFinanzas"><tr><td colspan="6"><div class="loading-state">Cargando...</div></td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const CATEGORIA_LABEL = { racion: 'Ración', torta_entera: 'Torta Entera', bebida: 'Bebida' };
+let PARAMS = null;
+let RENTABILIDAD = [];
+let ES_ADMIN = false;
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  if (ctx.perfil.rol === 'trabajador') {
+    document.querySelector('.container').innerHTML = '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+  ES_ADMIN = ctx.perfil.rol === 'administrador';
+  if (ES_ADMIN) document.getElementById('tabBtnFinanzas').style.display = '';
+
+  document.querySelectorAll('.tabs .tab-btn').forEach(b => b.addEventListener('click', () => cambiarTab(b.dataset.tab)));
+  document.getElementById('filtroCategoriaRent').addEventListener('change', renderRentabilidad);
+
+  const { data: params } = await supabaseClient.from('escandallo_parametros').select('*').eq('id', 1).single();
+  PARAMS = params;
+
+  configurarPeriodo('consumo', document.querySelectorAll('.periodo-btn'), 'consumoDesde', 'consumoHasta', 'periodoConsumoTexto', cargarConsumo);
+  configurarPeriodo('rotacion', document.querySelectorAll('.periodo-btn-rot'), 'rotacionDesde', 'rotacionHasta', 'periodoRotacionTexto', cargarRotacion);
+  configurarPeriodo('finanzas', document.querySelectorAll('.periodo-btn-fin'), 'finanzasDesde', 'finanzasHasta', 'periodoFinanzasTexto', cargarFinanzas);
+
+  await cargarRentabilidad();
+}
+
+function cambiarTab(tab) {
+  if (tab === 'finanzas' && !ES_ADMIN) return;
+  document.querySelectorAll('.tabs .tab-btn').forEach(b => b.classList.toggle('activo', b.dataset.tab === tab));
+  document.getElementById('tabRentabilidad').style.display = tab === 'rentabilidad' ? '' : 'none';
+  document.getElementById('tabConsumo').style.display = tab === 'consumo' ? '' : 'none';
+  document.getElementById('tabRotacion').style.display = tab === 'rotacion' ? '' : 'none';
+  document.getElementById('tabFinanzas').style.display = tab === 'finanzas' ? '' : 'none';
+  if (tab === 'consumo' && !CONSUMO_CARGADO) cargarConsumo();
+  if (tab === 'rotacion' && !ROTACION_CARGADO) cargarRotacion();
+  if (tab === 'finanzas' && !FINANZAS_CARGADO) cargarFinanzas();
+}
+
+/* ── Rango de fechas (compartido por Consumo y Rotación) ── */
+function rangoPeriodo(clave) {
+  const hoy = new Date();
+  const hasta = hoy.toISOString().slice(0, 10);
+  if (clave === 'mes') {
+    const desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().slice(0, 10);
+    return { desde, hasta };
+  }
+  const dias = clave === '7' ? 7 : 30;
+  const desdeFecha = new Date(hoy); desdeFecha.setDate(desdeFecha.getDate() - dias);
+  return { desde: desdeFecha.toISOString().slice(0, 10), hasta };
+}
+
+function configurarPeriodo(nombre, botones, idDesde, idHasta, idTexto, recargar) {
+  const { desde, hasta } = rangoPeriodo('30');
+  document.getElementById(idDesde).value = desde;
+  document.getElementById(idHasta).value = hasta;
+  actualizarTextoPeriodo(idTexto, desde, hasta);
+
+  botones.forEach(b => {
+    b.addEventListener('click', () => {
+      botones.forEach(x => x.classList.remove('activo'));
+      b.classList.add('activo');
+      const r = rangoPeriodo(b.dataset.periodo);
+      document.getElementById(idDesde).value = r.desde;
+      document.getElementById(idHasta).value = r.hasta;
+      actualizarTextoPeriodo(idTexto, r.desde, r.hasta);
+      recargar();
+    });
+  });
+  [idDesde, idHasta].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      botones.forEach(x => x.classList.remove('activo'));
+      actualizarTextoPeriodo(idTexto, document.getElementById(idDesde).value, document.getElementById(idHasta).value);
+      recargar();
+    });
+  });
+}
+
+function actualizarTextoPeriodo(idTexto, desde, hasta) {
+  document.getElementById(idTexto).textContent = `Del ${desde} al ${hasta}`;
+}
+
+/* ── RENTABILIDAD POR RECETA ── */
+
+async function cargarRentabilidad() {
+  const tbody = document.getElementById('tbodyRentabilidad');
+  const { data, error } = await supabaseClient
+    .from('recetas')
+    .select('id, nombre, categoria, precio_venta, activo, detalle_receta(cantidad, es_empaque, ingredientes(costo_unitario))')
+    .eq('activo', true);
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+
+  RENTABILIDAD = data.map(r => {
+    let mp = 0, empaque = 0;
+    for (const d of (r.detalle_receta || [])) {
+      const costo = d.cantidad * (d.ingredientes?.costo_unitario || 0);
+      if (d.es_empaque) empaque += costo; else mp += costo;
+    }
+    const mp_total = mp + empaque;
+    const directo = mp_total + (+PARAMS.equipos) + (+PARAMS.mano_obra) + (+PARAMS.carga_social);
+    const costo_total = directo * (1 + PARAMS.imprevisto_pct / 100) + (+PARAMS.costos_admin);
+    const margen = r.precio_venta != null && costo_total > 0 ? ((r.precio_venta - costo_total) / costo_total) * 100 : null;
+    return { ...r, costo_total, margen };
+  });
+  renderRentabilidad();
+}
+
+function renderRentabilidad() {
+  const tbody = document.getElementById('tbodyRentabilidad');
+  const cat = document.getElementById('filtroCategoriaRent').value;
+  let lista = cat ? RENTABILIDAD.filter(r => r.categoria === cat) : RENTABILIDAD.slice();
+  lista.sort((a, b) => (a.margen ?? 999) - (b.margen ?? 999));
+
+  if (!lista.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No hay recetas para mostrar.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = lista.map(r => {
+    const claseMargen = r.margen == null ? '' : (r.margen < 0 ? 'margen-neg' : 'margen-ok');
+    return `<tr>
+      <td class="wrap">${escapeHtml(r.nombre)}</td>
+      <td>${CATEGORIA_LABEL[r.categoria] || r.categoria}</td>
+      <td>$${r.costo_total.toFixed(2)}</td>
+      <td>${r.precio_venta != null ? '$' + Number(r.precio_venta).toFixed(2) : '—'}</td>
+      <td class="${claseMargen}">${r.margen == null ? '—' : r.margen.toFixed(0) + '%'}${r.margen != null && r.margen < 0 ? ' ⚠️' : ''}</td>
+    </tr>`;
+  }).join('');
+}
+
+/* ── CONSUMO DE MATERIA PRIMA ── */
+let CONSUMO_CARGADO = false;
+
+async function cargarConsumo() {
+  const tbody = document.getElementById('tbodyConsumo');
+  tbody.innerHTML = `<tr><td colspan="5"><div class="loading-state">Cargando...</div></td></tr>`;
+  const desde = document.getElementById('consumoDesde').value;
+  const hasta = document.getElementById('consumoHasta').value;
+
+  const { data, error } = await supabaseClient
+    .from('movimientos_inventario')
+    .select('cantidad, ingredientes(nombre, unidad_medida, costo_unitario)')
+    .eq('tipo', 'salida')
+    .gte('created_at', desde + 'T00:00:00')
+    .lte('created_at', hasta + 'T23:59:59');
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+  CONSUMO_CARGADO = true;
+
+  const agrupado = new Map();
+  for (const m of data) {
+    const nombre = m.ingredientes?.nombre || '—';
+    if (!agrupado.has(nombre)) {
+      agrupado.set(nombre, { nombre, unidad: m.ingredientes?.unidad_medida || '', cantidad: 0, valor: 0, movimientos: 0 });
+    }
+    const g = agrupado.get(nombre);
+    g.cantidad += Number(m.cantidad);
+    g.valor += Number(m.cantidad) * Number(m.ingredientes?.costo_unitario || 0);
+    g.movimientos += 1;
+  }
+  const lista = [...agrupado.values()].sort((a, b) => b.valor - a.valor);
+
+  if (!lista.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No hay salidas de materia prima registradas en este periodo.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = lista.map(g => `
+    <tr>
+      <td class="wrap">${escapeHtml(g.nombre)}</td>
+      <td>${escapeHtml(g.unidad)}</td>
+      <td>${g.cantidad.toLocaleString('es-VE', { maximumFractionDigits: 4 })}</td>
+      <td>$${g.valor.toFixed(2)}</td>
+      <td>${g.movimientos}</td>
+    </tr>
+  `).join('');
+}
+
+/* ── ROTACIÓN DE PRODUCTOS TERMINADOS ── */
+let ROTACION_CARGADO = false;
+
+async function cargarRotacion() {
+  const tbody = document.getElementById('tbodyRotacion');
+  tbody.innerHTML = `<tr><td colspan="4"><div class="loading-state">Cargando...</div></td></tr>`;
+  const desde = document.getElementById('rotacionDesde').value;
+  const hasta = document.getElementById('rotacionHasta').value;
+
+  const { data, error } = await supabaseClient
+    .from('lotes')
+    .select('receta_id, fecha_ingreso, retirado_at, motivo_retiro, recetas(nombre)')
+    .not('retirado_at', 'is', null)
+    .or('motivo_retiro.is.null,motivo_retiro.neq.transferido')
+    .gte('retirado_at', desde + 'T00:00:00')
+    .lte('retirado_at', hasta + 'T23:59:59');
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+  ROTACION_CARGADO = true;
+
+  const agrupado = new Map();
+  for (const l of data) {
+    const nombre = l.recetas?.nombre || '—';
+    const dias = Math.floor((new Date(l.retirado_at) - new Date(l.fecha_ingreso + 'T00:00:00')) / 86400000);
+    if (!agrupado.has(nombre)) agrupado.set(nombre, { nombre, lotes: 0, sumaDias: 0 });
+    const g = agrupado.get(nombre);
+    g.lotes += 1;
+    g.sumaDias += Math.max(dias, 0);
+  }
+
+  // Alertas de vencimiento en el mismo periodo, agrupadas por texto de receta (aproximado por mensaje)
+  const { data: alertas } = await supabaseClient
+    .from('alertas')
+    .select('mensaje')
+    .eq('tipo', 'vencimiento')
+    .gte('created_at', desde + 'T00:00:00')
+    .lte('created_at', hasta + 'T23:59:59');
+
+  const lista = [...agrupado.values()]
+    .map(g => ({
+      ...g,
+      promedio: g.lotes ? g.sumaDias / g.lotes : 0,
+      alertas: (alertas || []).filter(a => a.mensaje.startsWith(g.nombre)).length,
+    }))
+    .sort((a, b) => b.promedio - a.promedio);
+
+  if (!lista.length) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state">No hay lotes retirados en este periodo.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = lista.map(g => `
+    <tr>
+      <td class="wrap">${escapeHtml(g.nombre)}</td>
+      <td>${g.lotes}</td>
+      <td>${g.promedio.toFixed(1)} día(s)</td>
+      <td>${g.alertas}</td>
+    </tr>
+  `).join('');
+}
+
+/* ── GASTOS VS VENTAS (solo admin) ── */
+let FINANZAS_CARGADO = false;
+
+async function cargarFinanzas() {
+  const tbody = document.getElementById('tbodyFinanzas');
+  tbody.innerHTML = `<tr><td colspan="6"><div class="loading-state">Cargando...</div></td></tr>`;
+  const desde = document.getElementById('finanzasDesde').value;
+  const hasta = document.getElementById('finanzasHasta').value;
+
+  const [{ data: ventas, error: errVentas }, { data: gastos, error: errGastos }] = await Promise.all([
+    supabaseClient
+      .from('lotes')
+      .select('cantidad, receta_id, recetas(nombre, precio_venta)')
+      .eq('motivo_retiro', 'vendido')
+      .not('retirado_at', 'is', null)
+      .gte('retirado_at', desde + 'T00:00:00')
+      .lte('retirado_at', hasta + 'T23:59:59'),
+    supabaseClient
+      .from('plan_items')
+      .select('cantidad_producida, cantidad_planificada, receta_id, recetas(nombre, costo_base), planes_produccion!inner(fecha_planificada)')
+      .eq('cargado_a_inventario', true)
+      .gte('planes_produccion.fecha_planificada', desde)
+      .lte('planes_produccion.fecha_planificada', hasta),
+  ]);
+
+  if (errVentas || errGastos) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">Error al cargar: ${escapeHtml((errVentas || errGastos).message)}</div></td></tr>`;
+    return;
+  }
+  FINANZAS_CARGADO = true;
+
+  const agrupado = new Map();
+  const getGrupo = (nombre) => {
+    if (!agrupado.has(nombre)) agrupado.set(nombre, { nombre, unidadesVendidas: 0, ventas: 0, unidadesProducidas: 0, gastos: 0 });
+    return agrupado.get(nombre);
+  };
+
+  for (const l of (ventas || [])) {
+    const g = getGrupo(l.recetas?.nombre || '—');
+    g.unidadesVendidas += l.cantidad;
+    g.ventas += l.cantidad * Number(l.recetas?.precio_venta || 0);
+  }
+  for (const it of (gastos || [])) {
+    const cantidad = it.cantidad_producida ?? it.cantidad_planificada;
+    const g = getGrupo(it.recetas?.nombre || '—');
+    g.unidadesProducidas += cantidad;
+    g.gastos += cantidad * Number(it.recetas?.costo_base || 0);
+  }
+
+  const lista = [...agrupado.values()].sort((a, b) => (b.ventas - b.gastos) - (a.ventas - a.gastos));
+  const totalVentas = lista.reduce((s, g) => s + g.ventas, 0);
+  const totalGastos = lista.reduce((s, g) => s + g.gastos, 0);
+  const totalMargen = totalVentas - totalGastos;
+
+  document.getElementById('finVentasTotal').textContent = `$${totalVentas.toFixed(2)}`;
+  document.getElementById('finGastosTotal').textContent = `$${totalGastos.toFixed(2)}`;
+  const margenEl = document.getElementById('finMargenTotal');
+  margenEl.textContent = `$${totalMargen.toFixed(2)}`;
+  margenEl.className = 'valor-grande ' + (totalMargen < 0 ? 'margen-neg' : 'margen-ok');
+
+  if (!lista.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No hay ventas ni producción cargada en este periodo.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = lista.map(g => {
+    const margen = g.ventas - g.gastos;
+    const claseMargen = margen < 0 ? 'margen-neg' : 'margen-ok';
+    return `<tr>
+      <td class="wrap">${escapeHtml(g.nombre)}</td>
+      <td>${g.unidadesVendidas}</td>
+      <td>$${g.ventas.toFixed(2)}</td>
+      <td>${g.unidadesProducidas}</td>
+      <td>$${g.gastos.toFixed(2)}</td>
+      <td class="${claseMargen}">$${margen.toFixed(2)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

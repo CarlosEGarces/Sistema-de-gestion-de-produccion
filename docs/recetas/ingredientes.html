@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ingredientes — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Ingredientes</div>
+  <div class="header-sub">Materia Prima</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <div class="flex-between mt-8">
+    <a href="index.html" class="btn btn-outline btn-sm">← Recetas</a>
+    <button class="btn btn-primary btn-sm" id="btnNuevo">+ Nuevo Ingrediente</button>
+  </div>
+
+  <div class="panel mt-16" id="formPanel" style="display:none;">
+    <div class="section-title" id="formTitulo">Nuevo Ingrediente</div>
+    <form id="formIngrediente">
+      <input type="hidden" id="ingId">
+      <div class="field-row">
+        <div class="field">
+          <label>Nombre</label>
+          <input type="text" id="nombre" required>
+        </div>
+        <div class="field">
+          <label>Unidad de medida</label>
+          <select id="unidad" required>
+            <option value="g">g (gramos)</option>
+            <option value="kg">kg (kilogramos)</option>
+            <option value="ml">ml (mililitros)</option>
+            <option value="l">l (litros)</option>
+            <option value="unidad">unidad</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Categoría</label>
+          <select id="categoria" required>
+            <option value="materia_prima">Materia prima (harina, huevos, chocolate...)</option>
+            <option value="empaque">Empaque (cajas, discos, platos, stickers...)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Costo unitario (por 1 unidad de medida)</label>
+          <input type="number" id="costo" min="0" step="0.0001" required>
+        </div>
+      </div>
+      <div class="hint">Ej: si el kg de harina cuesta $1.20 y la unidad es "kg", pon 1.20.</div>
+      <div class="flex gap-8 mt-16">
+        <button type="submit" class="btn btn-primary" id="btnGuardar">Guardar</button>
+        <button type="button" class="btn btn-outline" id="btnCancelar">Cancelar</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="field mt-16" style="max-width:320px;">
+    <input type="text" id="buscar" placeholder="Buscar ingrediente...">
+  </div>
+
+  <div id="grupos" class="mt-16"><div class="loading-state">Cargando...</div></div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const CATEGORIA_LABEL = { materia_prima: 'Materia Prima', empaque: 'Empaque' };
+const ORDEN_CATEGORIAS = ['materia_prima', 'empaque'];
+let PERFIL = null;
+let PUEDE_ESCRIBIR = false;
+let INGREDIENTES = [];
+let FILTRO = '';
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  PERFIL = ctx.perfil;
+  pintarUsuario(PERFIL, 'userBox');
+  if (PERFIL.rol === 'trabajador') {
+    document.querySelector('.container').innerHTML = '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+  PUEDE_ESCRIBIR = tieneRol(PERFIL, ['administrador', 'produccion']);
+
+  document.getElementById('btnNuevo').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+  await cargarIngredientes();
+}
+
+async function cargarIngredientes() {
+  const cont = document.getElementById('grupos');
+  const { data, error } = await supabaseClient
+    .from('ingredientes')
+    .select('*')
+    .order('nombre');
+
+  if (error) {
+    cont.innerHTML = `<div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  INGREDIENTES = data;
+  render();
+}
+
+function render() {
+  const cont = document.getElementById('grupos');
+  const lista = FILTRO ? INGREDIENTES.filter(i => i.nombre.toLowerCase().includes(FILTRO)) : INGREDIENTES;
+
+  if (!lista.length) {
+    cont.innerHTML = `<div class="empty-state">No hay ingredientes que coincidan.</div>`;
+    return;
+  }
+
+  let html = '';
+  for (const cat of ORDEN_CATEGORIAS) {
+    const grupo = lista.filter(i => (i.categoria || 'materia_prima') === cat);
+    if (!grupo.length) continue;
+    html += `<div class="section-title mt-24">${CATEGORIA_LABEL[cat]}</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>Nombre</th><th>Unidad</th><th>Costo unitario</th><th>Estado</th><th></th>
+        </tr></thead>
+        <tbody>` + grupo.map(ing => `
+        <tr>
+          <td>${escapeHtml(ing.nombre)}</td>
+          <td>${escapeHtml(ing.unidad_medida)}</td>
+          <td>$${Number(ing.costo_unitario).toFixed(4)}</td>
+          <td><span class="badge ${ing.activo ? 'badge-ok' : 'badge-off'}">${ing.activo ? 'Activo' : 'Inactivo'}</span></td>
+          <td>
+            ${PUEDE_ESCRIBIR ? `
+              <button class="btn btn-outline btn-sm" onclick="editar('${ing.id}')">Editar</button>
+              <button class="btn btn-danger btn-sm" onclick="toggleActivo('${ing.id}', ${ing.activo})">${ing.activo ? 'Desactivar' : 'Activar'}</button>
+            ` : ''}
+          </td>
+        </tr>`).join('') + `</tbody></table></div>`;
+  }
+  cont.innerHTML = html;
+}
+
+document.getElementById('buscar').addEventListener('input', (e) => {
+  FILTRO = e.target.value.trim().toLowerCase();
+  render();
+});
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+document.getElementById('btnNuevo').addEventListener('click', () => {
+  document.getElementById('formTitulo').textContent = 'Nuevo Ingrediente';
+  document.getElementById('formIngrediente').reset();
+  document.getElementById('ingId').value = '';
+  document.getElementById('formPanel').style.display = '';
+});
+
+document.getElementById('btnCancelar').addEventListener('click', () => {
+  document.getElementById('formPanel').style.display = 'none';
+});
+
+async function editar(id) {
+  const { data, error } = await supabaseClient.from('ingredientes').select('*').eq('id', id).single();
+  if (error) { toast('No se pudo cargar el ingrediente', 'error'); return; }
+  document.getElementById('formTitulo').textContent = 'Editar Ingrediente';
+  document.getElementById('ingId').value = data.id;
+  document.getElementById('nombre').value = data.nombre;
+  document.getElementById('unidad').value = data.unidad_medida;
+  document.getElementById('categoria').value = data.categoria || 'materia_prima';
+  document.getElementById('costo').value = data.costo_unitario;
+  document.getElementById('formPanel').style.display = '';
+}
+
+async function toggleActivo(id, activoActual) {
+  const { error } = await supabaseClient.from('ingredientes').update({ activo: !activoActual }).eq('id', id);
+  if (error) { toast('No se pudo actualizar', 'error'); return; }
+  toast('Ingrediente actualizado');
+  cargarIngredientes();
+}
+
+document.getElementById('formIngrediente').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const id = document.getElementById('ingId').value;
+  const payload = {
+    nombre: document.getElementById('nombre').value.trim(),
+    unidad_medida: document.getElementById('unidad').value,
+    categoria: document.getElementById('categoria').value,
+    costo_unitario: parseFloat(document.getElementById('costo').value)
+  };
+
+  if (!payload.nombre || isNaN(payload.costo_unitario) || payload.costo_unitario < 0) {
+    toast('Revisa los datos: nombre y costo unitario válido son obligatorios', 'error');
+    return;
+  }
+
+  const query = id
+    ? supabaseClient.from('ingredientes').update(payload).eq('id', id)
+    : supabaseClient.from('ingredientes').insert(payload);
+
+  const { error } = await query;
+  if (error) {
+    toast('Error al guardar: ' + error.message, 'error');
+    return;
+  }
+
+  toast('Ingrediente guardado');
+  document.getElementById('formPanel').style.display = 'none';
+  cargarIngredientes();
+});
+
+init();
+</script>
+</body>
+</html>

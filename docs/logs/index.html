@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Logs — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Logs</div>
+  <div class="header-sub">Actividad del sistema</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <div class="flex-between mt-8" style="flex-wrap:wrap; gap:8px;">
+    <a href="../home.html" class="btn btn-outline btn-sm">← Módulos</a>
+  </div>
+
+  <div class="field-row mt-16">
+    <div class="field">
+      <label for="filtroUsuario">Usuario</label>
+      <select id="filtroUsuario"><option value="">Todos</option></select>
+    </div>
+    <div class="field">
+      <label for="filtroTabla">Módulo</label>
+      <select id="filtroTabla">
+        <option value="">Todos</option>
+        <option value="perfiles">Cuentas</option>
+        <option value="recetas">Recetas</option>
+        <option value="ingredientes">Ingredientes</option>
+        <option value="detalle_receta">Detalle de receta</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="filtroAccion">Acción</label>
+      <select id="filtroAccion">
+        <option value="">Todas</option>
+        <option value="insert">Creó</option>
+        <option value="update">Editó</option>
+        <option value="delete">Eliminó</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="table-wrap mt-16">
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Usuario</th>
+          <th>Módulo</th>
+          <th>Acción</th>
+          <th>Detalle</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr><td colspan="5"><div class="loading-state">Cargando...</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="hint mt-8" id="conteo"></div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const TABLA_LABEL = { perfiles: 'Cuentas', recetas: 'Recetas', ingredientes: 'Ingredientes', detalle_receta: 'Detalle de receta' };
+const ACCION_LABEL = { insert: 'Creó', update: 'Editó', delete: 'Eliminó' };
+const ACCION_CLASE = { insert: 'badge-ok', update: 'badge-off', delete: 'badge-off' };
+let LOGS = [];
+const LIMITE = 300;
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+
+  if (!tieneRol(ctx.perfil, ['administrador'])) {
+    document.querySelector('.container').innerHTML =
+      '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+
+  await cargarLogs();
+  ['filtroUsuario', 'filtroTabla', 'filtroAccion'].forEach(id =>
+    document.getElementById(id).addEventListener('change', aplicarFiltros)
+  );
+}
+
+async function cargarLogs() {
+  const tbody = document.getElementById('tbody');
+  const { data, error } = await supabaseClient
+    .from('logs')
+    .select('id, usuario_nombre, accion, tabla, registro_id, datos_anteriores, datos_nuevos, created_at')
+    .order('created_at', { ascending: false })
+    .limit(LIMITE);
+
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+  LOGS = data;
+
+  const usuarios = [...new Set(LOGS.map(l => l.usuario_nombre))].sort();
+  const selUsuario = document.getElementById('filtroUsuario');
+  selUsuario.innerHTML = '<option value="">Todos</option>' +
+    usuarios.map(u => `<option value="${escapeHtml(u)}">${escapeHtml(u)}</option>`).join('');
+
+  render(LOGS);
+}
+
+function aplicarFiltros() {
+  const usuario = document.getElementById('filtroUsuario').value;
+  const tabla = document.getElementById('filtroTabla').value;
+  const accion = document.getElementById('filtroAccion').value;
+  render(LOGS.filter(l =>
+    (!usuario || l.usuario_nombre === usuario) &&
+    (!tabla || l.tabla === tabla) &&
+    (!accion || l.accion === accion)
+  ));
+}
+
+function render(lista) {
+  const tbody = document.getElementById('tbody');
+  document.getElementById('conteo').textContent =
+    `Mostrando ${lista.length} de los últimos ${LIMITE} eventos registrados.`;
+
+  if (!lista.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">No hay actividad registrada todavía.</div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = lista.map(l => `
+    <tr>
+      <td>${formatearFecha(l.created_at)}</td>
+      <td class="wrap">${escapeHtml(l.usuario_nombre || 'Sistema')}</td>
+      <td>${TABLA_LABEL[l.tabla] || l.tabla}</td>
+      <td><span class="badge ${ACCION_CLASE[l.accion] || 'badge-off'}">${ACCION_LABEL[l.accion] || l.accion}</span></td>
+      <td class="wrap">${resumirCambio(l)}</td>
+    </tr>
+  `).join('');
+}
+
+function resumirCambio(l) {
+  if (l.accion === 'insert') {
+    return escapeHtml(descripcionRegistro(l.datos_nuevos));
+  }
+  if (l.accion === 'delete') {
+    return escapeHtml(descripcionRegistro(l.datos_anteriores));
+  }
+  // update: mostrar los campos que cambiaron
+  const antes = l.datos_anteriores || {};
+  const despues = l.datos_nuevos || {};
+  const campos = Object.keys(despues).filter(k =>
+    k !== 'updated_at' && k !== 'created_at' &&
+    JSON.stringify(antes[k]) !== JSON.stringify(despues[k])
+  );
+  if (!campos.length) return escapeHtml(descripcionRegistro(despues));
+  return campos.map(c => `<strong>${escapeHtml(c)}</strong>: ${escapeHtml(formatearValor(antes[c]))} → ${escapeHtml(formatearValor(despues[c]))}`).join('<br>');
+}
+
+function descripcionRegistro(datos) {
+  if (!datos) return '';
+  return datos.nombre || datos.id || '';
+}
+
+function formatearValor(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'boolean') return v ? 'Sí' : 'No';
+  return String(v);
+}
+
+function formatearFecha(iso) {
+  return new Date(iso).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

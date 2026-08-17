@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan de Producción — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.badge-plan-planificado { background:#EDF4FC; color:#2B6CB0; }
+.badge-plan-en_proceso { background:#FFF6DF; color:#8A6400; }
+.badge-plan-completado { background:#E7F7ED; color:var(--green); }
+.badge-plan-cancelado { background:#F2F2F2; color:#888; }
+.mini-input { width:80px; padding:4px 8px; border:1.5px solid #EED5E8; border-radius:8px; font-family:'Poppins',sans-serif; }
+.pedido-mini { background:#fff; border-radius:12px; box-shadow:var(--shadow); padding:10px 14px; margin-bottom:8px; border-left:4px solid var(--pink); display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+.pedido-mini.vinculado { border-left-color:var(--green); opacity:.75; }
+.tag-pedido { display:inline-block; background:var(--pink-pale); color:var(--pink-dark); font-size:10px; font-weight:700; text-transform:uppercase; padding:2px 8px; border-radius:8px; margin-top:2px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title" id="tituloPlan">Plan de Producción</div>
+  <div class="header-sub">Antojito's Cakes</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <div class="flex-between" style="flex-wrap:wrap; gap:8px;">
+    <a href="index.html" class="btn btn-outline btn-sm">← Planes</a>
+    <div class="flex gap-8" id="accionesPlan" style="display:none;">
+      <button class="btn btn-outline btn-sm" id="btnEditarPlan">Editar</button>
+      <button class="btn btn-outline btn-sm" id="btnRepetirPlan">Repetir otro día</button>
+      <button class="btn btn-danger btn-sm" id="btnEliminarPlan">Eliminar plan</button>
+    </div>
+  </div>
+
+  <div class="panel mt-16" id="cabeceraPanel">
+    <div class="loading-state">Cargando plan...</div>
+  </div>
+
+  <div class="section-title mt-24">Pedidos para esta fecha</div>
+  <div id="pedidosDelDia"><div class="loading-state">Cargando...</div></div>
+
+  <div class="flex-between mt-24" style="flex-wrap:wrap; gap:8px;">
+    <div class="section-title" style="margin:0; padding:0; flex:1;">Ítems del plan</div>
+    <div class="flex gap-8">
+      <button class="btn btn-outline btn-sm" id="btnNuevoItem" style="display:none;">+ Agregar receta</button>
+      <button class="btn btn-primary btn-sm" id="btnCargarTodo" style="display:none;">Cargar pendientes a Inventario</button>
+    </div>
+  </div>
+
+  <div class="panel mt-8" id="formItemPanel" style="display:none;">
+    <form id="formItem">
+      <div class="field-row">
+        <div class="field">
+          <label>Receta</label>
+          <select id="itemReceta" required></select>
+        </div>
+        <div class="field">
+          <label>Sede</label>
+          <select id="itemSede" required>
+            <option value="Orinokia">CC Orinokia Mall</option>
+            <option value="VillaAlianza">Villa Alianza</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Cantidad planificada</label>
+          <input type="number" id="itemCantidad" min="1" step="1" required>
+        </div>
+      </div>
+      <div class="flex gap-8">
+        <button type="submit" class="btn btn-primary btn-sm">Agregar</button>
+        <button type="button" class="btn btn-outline btn-sm" id="btnCancelarItem">Cancelar</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ── MODAL: EDITAR PLAN ── -->
+  <div class="modal-backdrop" id="modalEditar" style="display:none;">
+    <div class="modal-card">
+      <button type="button" class="modal-close" id="btnCerrarModalEditar">✕</button>
+      <div class="section-title" style="padding-top:0;">Editar plan</div>
+      <form id="formEditar">
+        <div class="field">
+          <label>Nombre del plan</label>
+          <input type="text" id="editNombre" required>
+        </div>
+        <div class="field">
+          <label>Fecha planificada</label>
+          <input type="date" id="editFecha" required>
+        </div>
+        <div class="field">
+          <label>Notas (opcional)</label>
+          <textarea id="editNotas" rows="2"></textarea>
+        </div>
+        <div class="flex gap-8 mt-16">
+          <button type="submit" class="btn btn-primary">Guardar cambios</button>
+          <button type="button" class="btn btn-outline" id="btnCancelarEditar">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ── MODAL: REPETIR PLAN ── -->
+  <div class="modal-backdrop" id="modalDuplicar" style="display:none;">
+    <div class="modal-card">
+      <button type="button" class="modal-close" id="btnCerrarModalDuplicar">✕</button>
+      <div class="section-title" style="padding-top:0;">Repetir plan otro día</div>
+      <form id="formDuplicar">
+        <div class="field">
+          <label>Nombre del nuevo plan</label>
+          <input type="text" id="dupNombre" required>
+        </div>
+        <div class="field">
+          <label>Nueva fecha planificada</label>
+          <input type="date" id="dupFecha" required>
+        </div>
+        <div class="hint">Copia las mismas recetas, cantidades y sedes. Las cantidades producidas y las cargas a inventario empiezan de cero.</div>
+        <div class="flex gap-8 mt-16">
+          <button type="submit" class="btn btn-primary">Crear copia</button>
+          <button type="button" class="btn btn-outline" id="btnCancelarDuplicar">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="table-wrap mt-16">
+    <table>
+      <thead><tr>
+        <th>Receta</th><th>Sede</th><th>Planificado</th><th>Ya en inventario</th><th>A producir</th>
+        <th>Producido</th><th>Cargado</th><th></th>
+      </tr></thead>
+      <tbody id="tbodyItems">
+        <tr><td colspan="8"><div class="loading-state">Cargando...</div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const ESTADO_LABEL = { planificado: 'Planificado', en_proceso: 'En proceso', completado: 'Completado', cancelado: 'Cancelado' };
+const params = new URLSearchParams(location.search);
+const PLAN_ID = params.get('id');
+let PUEDE_ESCRIBIR = false;
+let SESSION = null;
+let PLAN = null;
+let ITEMS = [];
+let RECETAS = [];
+let STOCK_PRODUCTO = {}; // `${receta_id}|${sede}` -> cantidad ya en exhibición
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  if (ctx.perfil.rol === 'trabajador' && ctx.perfil.sede === 'Orinokia') {
+    document.querySelector('.container').innerHTML = '<div class="empty-state">No tienes acceso a este módulo.</div>';
+    return;
+  }
+  PUEDE_ESCRIBIR = tieneRol(ctx.perfil, ['administrador', 'produccion']);
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  SESSION = session;
+
+  if (!PLAN_ID) {
+    document.getElementById('cabeceraPanel').innerHTML = '<div class="empty-state">Falta el id del plan.</div>';
+    return;
+  }
+
+  document.getElementById('btnNuevoItem').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+  document.getElementById('btnCargarTodo').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+  document.getElementById('accionesPlan').style.display = PUEDE_ESCRIBIR ? '' : 'none';
+
+  const { data: recetas } = await supabaseClient.from('recetas').select('id, nombre').eq('activo', true).order('nombre');
+  RECETAS = recetas || [];
+  document.getElementById('itemReceta').innerHTML = RECETAS.map(r => `<option value="${r.id}">${escapeHtml(r.nombre)}</option>`).join('');
+
+  await cargarPlan();
+  await cargarItems();
+  await cargarPedidosDelDia();
+}
+
+async function cargarPlan() {
+  const { data, error } = await supabaseClient.from('planes_produccion').select('*').eq('id', PLAN_ID).single();
+  if (error || !data) {
+    document.getElementById('cabeceraPanel').innerHTML = '<div class="empty-state">No se encontró el plan.</div>';
+    return;
+  }
+  PLAN = data;
+  document.getElementById('tituloPlan').textContent = data.nombre;
+  renderCabecera();
+}
+
+function renderCabecera() {
+  const cont = document.getElementById('cabeceraPanel');
+  const opcionesEstado = Object.keys(ESTADO_LABEL).map(e =>
+    `<option value="${e}" ${e === PLAN.estado ? 'selected' : ''}>${ESTADO_LABEL[e]}</option>`
+  ).join('');
+  cont.innerHTML = `
+    <div class="flex-between" style="flex-wrap:wrap; gap:12px;">
+      <div>
+        <div class="hint">Fecha planificada</div>
+        <strong>${PLAN.fecha_planificada}</strong>
+      </div>
+      <div>
+        <div class="hint">Estado</div>
+        ${PUEDE_ESCRIBIR
+          ? `<select id="selEstado" class="mini-input" style="width:150px;">${opcionesEstado}</select>`
+          : `<span class="badge badge-plan-${PLAN.estado}">${ESTADO_LABEL[PLAN.estado]}</span>`}
+      </div>
+    </div>
+    ${PLAN.notas ? `<div class="hint mt-8">${escapeHtml(PLAN.notas)}</div>` : ''}
+  `;
+  const sel = document.getElementById('selEstado');
+  if (sel) sel.addEventListener('change', async () => {
+    const { error } = await supabaseClient.from('planes_produccion').update({ estado: sel.value }).eq('id', PLAN_ID);
+    if (error) { toast('No se pudo actualizar: ' + error.message, 'error'); return; }
+    PLAN.estado = sel.value;
+    toast('Estado actualizado');
+  });
+}
+
+/* ── PEDIDOS DE ESTA FECHA ── */
+
+async function cargarPedidosDelDia() {
+  const cont = document.getElementById('pedidosDelDia');
+  if (!PLAN) { cont.innerHTML = ''; return; }
+
+  const { data, error } = await supabaseClient
+    .from('pedidos')
+    .select('id, tipo, receta_id, cantidad, sede, notas, estado, clientes(nombre), recetas(nombre), descripcion_personalizada')
+    .eq('fecha_entrega', PLAN.fecha_planificada)
+    .neq('estado', 'cancelado')
+    .order('created_at');
+
+  if (error) { cont.innerHTML = `<div class="empty-state">Error: ${escapeHtml(error.message)}</div>`; return; }
+  if (!data.length) { cont.innerHTML = `<div class="empty-state">No hay pedidos con entrega para el ${PLAN.fecha_planificada}.</div>`; return; }
+
+  const idsVinculados = new Set(ITEMS.map(i => i.pedido_id).filter(Boolean));
+
+  cont.innerHTML = data.map(p => {
+    const vinculado = idsVinculados.has(p.id);
+    const nombreProducto = p.tipo === 'receta' ? (p.recetas?.nombre || '—') : `Personalizada: ${escapeHtml(p.descripcion_personalizada || '')}`;
+    return `<div class="pedido-mini ${vinculado ? 'vinculado' : ''}">
+      <div>
+        <strong>${nombreProducto}</strong> <span class="hint">× ${p.cantidad}</span>
+        <div class="hint">👤 ${escapeHtml(p.clientes?.nombre || '—')} · ${p.sede === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}</div>
+        ${p.notas ? `<div class="hint">📝 ${escapeHtml(p.notas)}</div>` : ''}
+        <span class="tag-pedido">${p.estado}</span>
+      </div>
+      ${p.tipo === 'receta' && PUEDE_ESCRIBIR
+        ? (vinculado
+            ? '<span class="hint">✓ ya está en el plan</span>'
+            : `<button class="btn btn-outline btn-sm agregar-pedido-btn" data-id="${p.id}">+ Agregar al plan</button>`)
+        : (p.tipo === 'personalizada' ? '<span class="hint">Se produce aparte (no tiene receta)</span>' : '')}
+    </div>`;
+  }).join('');
+
+  cont.querySelectorAll('.agregar-pedido-btn').forEach(b => {
+    b.addEventListener('click', () => agregarPedidoAlPlan(b.dataset.id, data.find(p => p.id === b.dataset.id)));
+  });
+}
+
+async function agregarPedidoAlPlan(pedidoId, pedido) {
+  if (!pedido || !pedido.receta_id) return;
+  const { error } = await supabaseClient.from('plan_items').insert({
+    plan_id: PLAN_ID,
+    receta_id: pedido.receta_id,
+    sede: pedido.sede,
+    cantidad_planificada: pedido.cantidad,
+    pedido_id: pedidoId,
+  });
+  if (error) { toast('No se pudo agregar: ' + error.message, 'error'); return; }
+  toast(`"${pedido.recetas?.nombre || 'Receta'}" agregada al plan desde el pedido de ${pedido.clientes?.nombre || 'cliente'}`);
+  await cargarItems();
+  await cargarPedidosDelDia();
+}
+
+async function cargarItems() {
+  const { data, error } = await supabaseClient
+    .from('plan_items')
+    .select('id, receta_id, pedido_id, cantidad_planificada, cantidad_producida, sede, cargado_a_inventario, recetas(nombre), pedidos(clientes(nombre))')
+    .eq('plan_id', PLAN_ID)
+    .order('created_at');
+
+  if (error) {
+    document.getElementById('tbodyItems').innerHTML = `<tr><td colspan="8"><div class="empty-state">Error: ${escapeHtml(error.message)}</div></td></tr>`;
+    return;
+  }
+  ITEMS = data || [];
+  await cargarStockProducto();
+  renderItems();
+}
+
+// Stock ya existente en exhibición (lotes activos) por receta + sede, para saber
+// cuánto falta producir en vez de partir siempre de cero.
+async function cargarStockProducto() {
+  STOCK_PRODUCTO = {};
+  const recetaIds = [...new Set(ITEMS.map(i => i.receta_id))];
+  if (!recetaIds.length) return;
+
+  const { data, error } = await supabaseClient
+    .from('lotes')
+    .select('receta_id, sede, cantidad')
+    .in('receta_id', recetaIds)
+    .is('retirado_at', null);
+  if (error) return;
+
+  for (const l of data || []) {
+    const clave = `${l.receta_id}|${l.sede}`;
+    STOCK_PRODUCTO[clave] = (STOCK_PRODUCTO[clave] || 0) + l.cantidad;
+  }
+}
+
+function renderItems() {
+  const tbody = document.getElementById('tbodyItems');
+  if (!ITEMS.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state">Sin recetas agregadas a este plan todavía.</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = ITEMS.map(it => {
+    const enInventario = STOCK_PRODUCTO[`${it.receta_id}|${it.sede}`] || 0;
+    const aProducir = Math.max(it.cantidad_planificada - enInventario, 0);
+    return `
+    <tr>
+      <td class="wrap">${escapeHtml(it.recetas?.nombre || '—')}
+        ${it.pedido_id ? `<div class="tag-pedido">🛍️ ${escapeHtml(it.pedidos?.clientes?.nombre || 'pedido')}</div>` : ''}</td>
+      <td>${it.sede === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'}</td>
+      <td>${it.cantidad_planificada}</td>
+      <td>${enInventario}</td>
+      <td><strong>${aProducir}</strong></td>
+      <td>
+        ${PUEDE_ESCRIBIR && !it.cargado_a_inventario
+          ? `<input type="number" min="0" step="1" class="mini-input producido-input" data-id="${it.id}" value="${it.cantidad_producida ?? ''}" placeholder="${aProducir}">`
+          : (it.cantidad_producida ?? '—')}
+      </td>
+      <td>${it.cargado_a_inventario
+          ? '<span class="badge badge-ok">Cargado ✓</span>'
+          : '<span class="badge badge-off">Pendiente</span>'}</td>
+      <td>${PUEDE_ESCRIBIR && !it.cargado_a_inventario
+          ? `<button class="btn btn-outline btn-sm cargar-item-btn" data-id="${it.id}">→ Cargar</button>`
+          : ''}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('.producido-input').forEach(inp => {
+    inp.addEventListener('change', async () => {
+      const id = inp.dataset.id;
+      const valor = inp.value === '' ? null : parseInt(inp.value, 10);
+      const { error } = await supabaseClient.from('plan_items').update({ cantidad_producida: valor }).eq('id', id);
+      if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
+      const item = ITEMS.find(i => i.id === id);
+      if (item) item.cantidad_producida = valor;
+      toast('Cantidad producida guardada');
+    });
+  });
+  tbody.querySelectorAll('.cargar-item-btn').forEach(b => {
+    b.addEventListener('click', () => cargarItemAInventario(b.dataset.id));
+  });
+}
+
+async function cargarItemAInventario(itemId) {
+  const item = ITEMS.find(i => i.id === itemId);
+  if (!item) return;
+  const cantidad = item.cantidad_producida ?? item.cantidad_planificada;
+  if (!cantidad || cantidad <= 0) { toast('La cantidad debe ser mayor a 0 para cargar a inventario', 'error'); return; }
+
+  const { data: lote, error: errLote } = await supabaseClient.from('lotes').insert({
+    receta_id: item.receta_id,
+    cantidad,
+    sede: item.sede,
+    fecha_ingreso: new Date().toISOString().slice(0, 10),
+    created_by: SESSION.user.id,
+  }).select('id').single();
+  if (errLote) { toast('No se pudo crear el lote: ' + errLote.message, 'error'); return; }
+
+  const { error: errItem } = await supabaseClient.from('plan_items')
+    .update({ cargado_a_inventario: true, lote_id: lote.id }).eq('id', itemId);
+  if (errItem) { toast('Lote creado, pero no se pudo marcar el ítem: ' + errItem.message, 'error'); return; }
+
+  toast('Cargado a Inventario');
+  await cargarItems();
+}
+
+document.getElementById('btnCargarTodo').addEventListener('click', async () => {
+  const pendientes = ITEMS.filter(i => !i.cargado_a_inventario && (i.cantidad_producida ?? i.cantidad_planificada) > 0);
+  if (!pendientes.length) { toast('No hay ítems pendientes por cargar'); return; }
+
+  const ok = window.confirm(
+    `Vas a crear ${pendientes.length} lote(s) nuevo(s) en Inventario, uno por cada receta pendiente ` +
+    `(usando la cantidad producida, o la planificada si no la definiste).\n\n¿Continuar?`
+  );
+  if (!ok) return;
+
+  let fallos = 0;
+  for (const it of pendientes) {
+    const cantidad = it.cantidad_producida ?? it.cantidad_planificada;
+    const { data: lote, error: errLote } = await supabaseClient.from('lotes').insert({
+      receta_id: it.receta_id, cantidad, sede: it.sede,
+      fecha_ingreso: new Date().toISOString().slice(0, 10), created_by: SESSION.user.id,
+    }).select('id').single();
+    if (errLote) { fallos++; continue; }
+    const { error: errItem } = await supabaseClient.from('plan_items')
+      .update({ cargado_a_inventario: true, lote_id: lote.id }).eq('id', it.id);
+    if (errItem) fallos++;
+  }
+  toast(fallos ? `${fallos} error(es); el resto se cargó` : `${pendientes.length} lote(s) creados en Inventario`, fallos ? 'error' : 'ok');
+  await cargarItems();
+});
+
+document.getElementById('btnNuevoItem').addEventListener('click', () => {
+  document.getElementById('formItemPanel').style.display = '';
+});
+document.getElementById('btnCancelarItem').addEventListener('click', () => {
+  document.getElementById('formItemPanel').style.display = 'none';
+});
+
+document.getElementById('formItem').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    plan_id: PLAN_ID,
+    receta_id: document.getElementById('itemReceta').value,
+    sede: document.getElementById('itemSede').value,
+    cantidad_planificada: parseInt(document.getElementById('itemCantidad').value, 10),
+  };
+  const { error } = await supabaseClient.from('plan_items').insert(payload);
+  if (error) { toast('No se pudo agregar: ' + error.message, 'error'); return; }
+  toast('Receta agregada al plan');
+  document.getElementById('formItem').reset();
+  document.getElementById('formItemPanel').style.display = 'none';
+  await cargarItems();
+});
+
+/* ── EDITAR PLAN ── */
+
+document.getElementById('btnEditarPlan').addEventListener('click', () => {
+  document.getElementById('editNombre').value = PLAN.nombre;
+  document.getElementById('editFecha').value = PLAN.fecha_planificada;
+  document.getElementById('editNotas').value = PLAN.notas || '';
+  document.getElementById('modalEditar').style.display = 'flex';
+});
+
+function cerrarModalEditar() {
+  document.getElementById('modalEditar').style.display = 'none';
+}
+document.getElementById('btnCancelarEditar').addEventListener('click', cerrarModalEditar);
+document.getElementById('btnCerrarModalEditar').addEventListener('click', cerrarModalEditar);
+document.getElementById('modalEditar').addEventListener('click', (e) => {
+  if (e.target.id === 'modalEditar') cerrarModalEditar();
+});
+
+document.getElementById('formEditar').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    nombre: document.getElementById('editNombre').value.trim(),
+    fecha_planificada: document.getElementById('editFecha').value,
+    notas: document.getElementById('editNotas').value.trim() || null,
+  };
+  const { error } = await supabaseClient.from('planes_produccion').update(payload).eq('id', PLAN_ID);
+  if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
+  PLAN = { ...PLAN, ...payload };
+  document.getElementById('tituloPlan').textContent = PLAN.nombre;
+  renderCabecera();
+  toast('Plan actualizado');
+  cerrarModalEditar();
+  await cargarPedidosDelDia();
+});
+
+/* ── ELIMINAR / REPETIR PLAN ── */
+
+document.getElementById('btnEliminarPlan').addEventListener('click', async () => {
+  if (!PLAN) return;
+  const ok = window.confirm(
+    `¿Eliminar el plan "${PLAN.nombre}" (${PLAN.fecha_planificada})?\n\n` +
+    `Esto borra también sus ${ITEMS.length} receta(s) planificadas. Los lotes que ya se hayan ` +
+    `cargado a Inventario NO se borran. Esta acción no se puede deshacer.`
+  );
+  if (!ok) return;
+
+  const { error } = await supabaseClient.from('planes_produccion').delete().eq('id', PLAN_ID);
+  if (error) { toast('No se pudo eliminar: ' + error.message, 'error'); return; }
+  location.href = 'index.html';
+});
+
+document.getElementById('btnRepetirPlan').addEventListener('click', () => {
+  document.getElementById('dupNombre').value = PLAN.nombre;
+  document.getElementById('dupFecha').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('modalDuplicar').style.display = 'flex';
+});
+
+function cerrarModalDuplicar() {
+  document.getElementById('modalDuplicar').style.display = 'none';
+}
+document.getElementById('btnCancelarDuplicar').addEventListener('click', cerrarModalDuplicar);
+document.getElementById('btnCerrarModalDuplicar').addEventListener('click', cerrarModalDuplicar);
+document.getElementById('modalDuplicar').addEventListener('click', (e) => {
+  if (e.target.id === 'modalDuplicar') cerrarModalDuplicar();
+});
+
+document.getElementById('formDuplicar').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const { data: nuevoPlan, error: errPlan } = await supabaseClient.from('planes_produccion').insert({
+    nombre: document.getElementById('dupNombre').value.trim(),
+    fecha_planificada: document.getElementById('dupFecha').value,
+    created_by: SESSION.user.id,
+  }).select('id').single();
+  if (errPlan) { toast('No se pudo crear el nuevo plan: ' + errPlan.message, 'error'); return; }
+
+  if (ITEMS.length) {
+    const nuevosItems = ITEMS.map(it => ({
+      plan_id: nuevoPlan.id, receta_id: it.receta_id,
+      cantidad_planificada: it.cantidad_planificada, sede: it.sede,
+    }));
+    const { error: errInsert } = await supabaseClient.from('plan_items').insert(nuevosItems);
+    if (errInsert) { toast('Plan creado, pero no se pudieron copiar las recetas: ' + errInsert.message, 'error'); return; }
+  }
+
+  location.href = `plan.html?id=${nuevoPlan.id}`;
+});
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Carga Masiva — Gestión de Producción</title>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
+<link rel="stylesheet" href="../shared/style.css">
+<link rel="icon" type="image/png" href="../shared/img/favicon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="apple-touch-icon" href="../shared/img/icon-192.png">
+<meta name="theme-color" content="#1A1A2E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.unidad-chip {
+  display:inline-block; background:var(--pink-pale); color:var(--pink-dark);
+  padding:2px 10px; border-radius:10px; font-size:11px; font-weight:600; text-transform:uppercase;
+}
+.cant-input { width:120px; padding:6px 10px; border:1.5px solid #EED5E8; border-radius:8px; font-family:'Poppins',sans-serif; }
+.barra-guardar {
+  position:sticky; bottom:0; background:#fff; border-top:2px solid var(--pink-light);
+  padding:14px 16px; margin:0 -16px; display:flex; justify-content:space-between; align-items:center;
+  flex-wrap:wrap; gap:10px;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-stripe"></div>
+  <img src="../shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
+  <div class="header-title">Carga Masiva</div>
+  <div class="header-sub">Materia Prima</div>
+  <div class="header-user" id="userBox"></div>
+</div>
+
+<div class="container">
+  <a href="index.html" class="btn btn-outline btn-sm">← Inventario</a>
+
+  <div class="hint mt-16">
+    Escribe la cantidad que quieres <strong>sumar</strong> al stock actual de cada ingrediente, en la unidad
+    indicada junto al nombre. Deja el campo <strong>en blanco</strong> para no tocar ese ingrediente — su stock
+    se queda igual. Cada fila con cantidad crea un movimiento de <strong>entrada</strong> marcado como "Carga masiva"
+    (podrás deshacerlo individualmente después, desde Inventario → Movimientos Masivos).
+  </div>
+
+  <div class="field mt-16" style="max-width:320px;">
+    <input type="text" id="buscar" placeholder="Buscar ingrediente...">
+  </div>
+
+  <div id="grupos" class="mt-16"><div class="loading-state">Cargando...</div></div>
+
+  <div class="barra-guardar mt-16">
+    <span class="hint" id="resumen">0 ingredientes con cantidad para cargar.</span>
+    <button class="btn btn-primary" id="btnGuardarTodo">Guardar carga masiva</button>
+  </div>
+</div>
+
+<script src="../shared/supabaseClient.js"></script>
+<script>
+const CATEGORIA_LABEL = { materia_prima: 'Materia Prima', empaque: 'Empaque' };
+const ESTADO_FISICO_LABEL = { liquido: 'Líquida', solido: 'Sólida' };
+let INGREDIENTES = [];
+let SESSION = null;
+let FILTRO = '';
+
+async function init() {
+  const ctx = await requireSession();
+  if (!ctx) return;
+  pintarUsuario(ctx.perfil, 'userBox');
+  if (!tieneRol(ctx.perfil, ['administrador', 'produccion', 'inventario'])) {
+    document.querySelector('.container').innerHTML = '<div class="empty-state">No tienes acceso a esta página.</div>';
+    return;
+  }
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  SESSION = session;
+  await cargarIngredientes();
+}
+
+async function cargarIngredientes() {
+  const cont = document.getElementById('grupos');
+  const { data, error } = await supabaseClient
+    .from('ingredientes')
+    .select('id, nombre, unidad_medida, categoria, estado_fisico, stock_actual')
+    .eq('activo', true)
+    .order('nombre');
+
+  if (error) {
+    cont.innerHTML = `<div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  INGREDIENTES = data;
+  render();
+}
+
+function filaCarga(i) {
+  return `<tr data-id="${i.id}">
+    <td class="wrap">${escapeHtml(i.nombre)}</td>
+    <td><span class="unidad-chip">${escapeHtml(i.unidad_medida)}</span></td>
+    <td>${Number(i.stock_actual).toLocaleString('es-VE', { maximumFractionDigits: 4 })}</td>
+    <td><input type="number" min="0" step="0.0001" class="cant-input carga-input" data-id="${i.id}" placeholder="sin cambio"></td>
+  </tr>`;
+}
+
+function render() {
+  const cont = document.getElementById('grupos');
+  const lista = FILTRO ? INGREDIENTES.filter(i => i.nombre.toLowerCase().includes(FILTRO)) : INGREDIENTES;
+
+  if (!lista.length) {
+    cont.innerHTML = `<div class="empty-state">No hay ingredientes que coincidan.</div>`;
+    return;
+  }
+
+  let html = '';
+  const materiaPrima = lista.filter(i => (i.categoria || 'materia_prima') === 'materia_prima');
+  for (const estado of ['liquido', 'solido']) {
+    const grupo = materiaPrima.filter(i => (i.estado_fisico || 'solido') === estado);
+    if (!grupo.length) continue;
+    html += tablaGrupo(`Materia Prima — ${ESTADO_FISICO_LABEL[estado]}`, grupo);
+  }
+  const empaque = lista.filter(i => i.categoria === 'empaque');
+  if (empaque.length) html += tablaGrupo(CATEGORIA_LABEL.empaque, empaque);
+
+  cont.innerHTML = html;
+
+  cont.querySelectorAll('.carga-input').forEach(inp => {
+    inp.addEventListener('input', actualizarResumen);
+  });
+  actualizarResumen();
+}
+
+function tablaGrupo(titulo, grupo) {
+  return `<div class="section-title mt-24">${titulo}</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Ingrediente</th><th>Unidad</th><th>Stock actual</th><th>Cantidad a sumar</th>
+      </tr></thead>
+      <tbody>${grupo.map(filaCarga).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+function actualizarResumen() {
+  const conValor = [...document.querySelectorAll('.carga-input')].filter(i => parseFloat(i.value) > 0);
+  document.getElementById('resumen').textContent = `${conValor.length} ingrediente(s) con cantidad para cargar.`;
+}
+
+document.getElementById('buscar').addEventListener('input', (e) => {
+  FILTRO = e.target.value.trim().toLowerCase();
+  render();
+});
+
+document.getElementById('btnGuardarTodo').addEventListener('click', async () => {
+  const filas = [...document.querySelectorAll('.carga-input')]
+    .map(inp => ({ id: inp.dataset.id, cantidad: parseFloat(inp.value) }))
+    .filter(f => f.cantidad > 0);
+
+  if (!filas.length) { toast('No hay cantidades para cargar', 'error'); return; }
+
+  const ok = window.confirm(
+    `Vas a registrar la carga masiva de stock para ${filas.length} ingrediente(s).\n\n` +
+    `Cada cantidad se SUMA al stock actual (no lo reemplaza). Después puedes deshacer cada uno ` +
+    `individualmente desde Inventario → Movimientos Masivos si te equivocas.\n\n¿Continuar?`
+  );
+  if (!ok) return;
+
+  const movimientos = filas.map(f => ({
+    ingrediente_id: f.id,
+    tipo: 'entrada',
+    cantidad: f.cantidad,
+    motivo: 'Carga masiva',
+    origen: 'masivo',
+    created_by: SESSION.user.id,
+  }));
+
+  const { error } = await supabaseClient.from('movimientos_inventario').insert(movimientos);
+  if (error) { toast('Error al guardar: ' + error.message, 'error'); return; }
+
+  toast(`Carga masiva registrada para ${filas.length} ingrediente(s)`);
+  document.querySelectorAll('.carga-input').forEach(inp => inp.value = '');
+  await cargarIngredientes();
+});
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : String(str);
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>
