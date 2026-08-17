@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Gestión de Producción — Antojito's Cakes</title>
+<title>Antojito's Cakes — Gestión de Producción</title>
 <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,wght@0,400;0,600;0,700;1,400&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link href="https://fonts.cdnfonts.com/css/angel-club" rel="stylesheet">
 <link rel="stylesheet" href="shared/style.css">
@@ -15,182 +15,76 @@
 </head>
 <body>
 
-<div class="header">
-  <div class="header-stripe"></div>
-  <img src="shared/img/logo.png" alt="Antojito's Cakes" class="header-logo">
-  <div class="header-title">Gestión de Producción</div>
-  <div class="header-sub">Antojito's Cakes</div>
-  <div class="header-user" id="userBox"></div>
-</div>
+<div class="login-wrap">
+  <div class="login-card">
+    <img src="shared/img/logo.png" alt="Antojito's Cakes" class="login-logo-img">
+    <div class="login-logo">Antojito's Cakes</div>
+    <div class="login-sub">Gestión de Producción</div>
 
-<div class="container">
-
-  <div class="flex-between mt-8" style="flex-wrap:wrap; gap:8px;">
-    <div class="section-title" style="margin:0; padding:0; flex:1;">Alertas</div>
-    <span class="hint" style="display:flex; align-items:center; gap:6px;">
-      <span id="tasaBadge"></span>
-      <button class="btn btn-outline btn-sm" id="btnRefrescarTasa" title="Actualizar tasa BCV ahora" style="padding:2px 8px; line-height:1;">⟳</button>
-    </span>
-  </div>
-  <div class="panel" id="alertPanel">
-    <div class="alert-list" id="alertList">
-      <div class="loading-state" style="padding:10px;">Cargando alertas...</div>
-    </div>
-  </div>
-
-  <div class="section-title mt-24">Módulos</div>
-  <div class="modules-grid" id="modulesGrid" style="display:none;">
-    <a class="module-card" href="recetas/index.html" style="text-decoration:none;" id="cardRecetas">
-      <div class="module-icon">📋</div>
-      <div class="module-name">Recetas</div>
-      <div class="module-desc">Fichas técnicas y CRUD de productos</div>
-    </a>
-    <a class="module-card" href="escandallo/index.html" style="text-decoration:none;" id="cardEscandallo">
-      <div class="module-icon">💰</div>
-      <div class="module-name">Escandallo</div>
-      <div class="module-desc">Costos, precios y estandarización</div>
-    </a>
-    <a class="module-card" href="inventario/index.html" style="text-decoration:none;">
-      <div class="module-icon">📦</div>
-      <div class="module-name">Inventario</div>
-      <div class="module-desc">Productos terminados y materia prima</div>
-    </a>
-    <a class="module-card" href="produccion/index.html" style="text-decoration:none;" id="cardProduccion">
-      <div class="module-icon">🏭</div>
-      <div class="module-name">Producción</div>
-      <div class="module-desc">Planes y carga a inventario</div>
-    </a>
-    <a class="module-card" href="pedidos/index.html" style="text-decoration:none;">
-      <div class="module-icon">🛍️</div>
-      <div class="module-name">Pedidos</div>
-      <div class="module-desc">Calendario de entregas y clientes</div>
-    </a>
-    <a class="module-card" href="reportes/index.html" style="text-decoration:none;" id="cardReportes">
-      <div class="module-icon">📊</div>
-      <div class="module-name">Reportes</div>
-      <div class="module-desc">Rentabilidad, consumo y rotación</div>
-    </a>
-    <a class="module-card" href="administracion/index.html" style="text-decoration:none;" id="cardAdmin">
-      <div class="module-icon">⚙️</div>
-      <div class="module-name">Administración</div>
-      <div class="module-desc">Cuentas y niveles de acceso</div>
-    </a>
-    <a class="module-card" href="logs/index.html" style="text-decoration:none;" id="cardLogs">
-      <div class="module-icon">🗂️</div>
-      <div class="module-name">Logs</div>
-      <div class="module-desc">Actividad de cada usuario</div>
-    </a>
+    <form id="formLogin">
+      <div class="field">
+        <label for="email">Correo</label>
+        <input type="email" id="email" required autocomplete="username">
+      </div>
+      <div class="field">
+        <label for="password">Contraseña</label>
+        <input type="password" id="password" required autocomplete="current-password">
+      </div>
+      <div class="error-text" id="errorMsg"></div>
+      <button type="submit" class="btn btn-primary" style="width:100%; margin-top:8px;" id="btnEntrar">
+        Entrar
+      </button>
+    </form>
   </div>
 </div>
 
 <script src="shared/supabaseClient.js"></script>
 <script>
-const TIPO_ICONO = { stock: '📦', pedido: '🛍️', vencimiento: '⏰', sistema: '⚙️' };
-const NIVEL_LABEL = { info: 'Info', advertencia: 'Advertencia', critica: 'Crítica' };
-let PUEDE_RESOLVER = false;
-
 (async () => {
-  const ctx = await requireSession();
-  if (!ctx) return;
-  pintarUsuario(ctx.perfil, 'userBox');
-
-  const esAdmin = tieneRol(ctx.perfil, ['administrador']);
-  const esTrabajador = ctx.perfil.rol === 'trabajador';
-  PUEDE_RESOLVER = tieneRol(ctx.perfil, ['administrador', 'produccion', 'inventario']);
-  if (!esAdmin) {
-    document.getElementById('cardAdmin').style.display = 'none';
-    document.getElementById('cardLogs').style.display = 'none';
-  }
-  if (esTrabajador) {
-    document.getElementById('cardEscandallo').style.display = 'none';
-    document.getElementById('cardReportes').style.display = 'none';
-  }
-  if (esTrabajador && ctx.perfil.sede === 'Orinokia') {
-    document.getElementById('cardRecetas').style.display = 'none';
-    document.getElementById('cardProduccion').style.display = 'none';
-  }
-  document.getElementById('modulesGrid').style.display = '';
-
-  await verificarAlertasInventario(ctx.perfil);
-  cargarAlertas();
-  cargarTasa();
+  // Si ya hay sesión activa, saltar directo al home
+  const { data: { session } } = await supabaseClient.auth.getSession();
+  if (session) location.href = 'home.html';
 })();
 
-async function cargarTasa() {
-  const el = document.getElementById('tasaBadge');
-  const { data, error } = await supabaseClient.from('tasa_cambio').select('*').eq('id', 1).single();
-  if (error || !data) { el.textContent = ''; return; }
-  const fecha = new Date(data.actualizado_at).toLocaleDateString('es-VE', { day: '2-digit', month: 'short' });
-  el.textContent = `Tasa BCV: Bs. ${Number(data.tasa).toFixed(4)} / $ (${fecha})`;
-}
+document.getElementById('formLogin').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
+  const errorEl = document.getElementById('errorMsg');
+  const btn = document.getElementById('btnEntrar');
 
-document.getElementById('btnRefrescarTasa').addEventListener('click', async (e) => {
-  const btn = e.currentTarget;
+  errorEl.classList.remove('show');
   btn.disabled = true;
-  btn.textContent = '…';
-  try {
-    await actualizarTasaBcvAhora();
-    await cargarTasa();
-    toast('Tasa BCV actualizada');
-  } catch (err) {
-    toast('No se pudo actualizar: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '⟳';
-  }
-});
+  btn.textContent = 'Entrando...';
 
-async function cargarAlertas() {
-  const list = document.getElementById('alertList');
-  const { data, error } = await supabaseClient
-    .from('alertas')
-    .select('id, tipo, nivel, mensaje, modulo, created_at')
-    .eq('resuelta', false)
-    .order('created_at', { ascending: false })
-    .limit(20);
+  const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
 
   if (error) {
-    list.innerHTML = `<div class="empty-state" style="padding:10px;">Error al cargar alertas: ${escapeHtml(error.message)}</div>`;
+    errorEl.textContent = 'Correo o contraseña incorrectos.';
+    errorEl.classList.add('show');
+    btn.disabled = false;
+    btn.textContent = 'Entrar';
     return;
   }
 
-  if (!data.length) {
-    list.innerHTML = `<div class="empty-state" style="padding:10px;">✓ Sin alertas pendientes. Aquí aparecerán avisos de falta de materia prima, pedidos próximos y productos por vencer.</div>`;
+  // Confirmar que el usuario tiene un perfil activo antes de dejarlo entrar
+  const { data: perfil, error: perfilError } = await supabaseClient
+    .from('perfiles')
+    .select('activo')
+    .eq('id', data.user.id)
+    .single();
+
+  if (perfilError || !perfil || !perfil.activo) {
+    await supabaseClient.auth.signOut();
+    errorEl.textContent = 'Este usuario no tiene acceso al sistema.';
+    errorEl.classList.add('show');
+    btn.disabled = false;
+    btn.textContent = 'Entrar';
     return;
   }
 
-  list.innerHTML = data.map(a => `
-    <div class="alert-item alert-${a.nivel}">
-      <div class="alert-icon">${TIPO_ICONO[a.tipo] || '🔔'}</div>
-      <div class="alert-body">
-        <span class="alert-nivel">${NIVEL_LABEL[a.nivel] || a.nivel}</span> · ${escapeHtml(a.mensaje)}
-        <div class="alert-meta">${a.modulo ? escapeHtml(a.modulo) + ' · ' : ''}${formatearFecha(a.created_at)}</div>
-      </div>
-      ${PUEDE_RESOLVER ? `<button class="btn btn-outline btn-sm" onclick="resolverAlerta(${a.id})">Resolver</button>` : ''}
-    </div>
-  `).join('');
-}
-
-async function resolverAlerta(id) {
-  const { data: { session } } = await supabaseClient.auth.getSession();
-  const { error } = await supabaseClient
-    .from('alertas')
-    .update({ resuelta: true, resuelta_por: session.user.id, resuelta_at: new Date().toISOString() })
-    .eq('id', id);
-  if (error) { toast('No se pudo resolver: ' + error.message, 'error'); return; }
-  toast('Alerta resuelta');
-  cargarAlertas();
-}
-
-function formatearFecha(iso) {
-  return new Date(iso).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' });
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str == null ? '' : String(str);
-  return div.innerHTML;
-}
+  location.href = 'home.html';
+});
 </script>
 </body>
 </html>
