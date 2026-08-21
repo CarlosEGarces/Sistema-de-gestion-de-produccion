@@ -2,7 +2,7 @@
   "name": "Antojito's Cakes — Gestión de Producción",
   "short_name": "Antojito's",
   "description": "Recetas, escandallo, inventario y planes de producción de Antojito's Cakes.",
-  "start_url": "produccion/hoy.html",
+  "start_url": "index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
