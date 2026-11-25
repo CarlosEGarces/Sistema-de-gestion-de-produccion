@@ -69,8 +69,8 @@ const CATEGORIAS = [
   { clave: 'bebida', titulo: 'Bebidas' },
 ];
 const TAMANOS = [
-  { kg: 0.25, label: '1/4 kg' }, { kg: 0.333, label: '1/3 kg' },
-  { kg: 0.5, label: '1/2 kg' }, { kg: 1, label: '1 kg' },
+  { kg: 0.0625, label: '1/16 kg', porciones: 4 }, { kg: 0.125, label: '1/8 kg', porciones: 8 }, { kg: 0.25, label: '1/4 kg', porciones: 16 },
+  { kg: 0.333, label: '1/3 kg', porciones: 20 }, { kg: 0.5, label: '1/2 kg', porciones: 32 }, { kg: 1, label: '1 kg', porciones: 40 },
 ];
 let PARAMS = null;
 let RECETAS = [];
@@ -140,9 +140,15 @@ async function guardarParams() {
 }
 
 async function cargarRecetas() {
+  const conSub = await soportaSubrecetas();
+  const conFactor = await soportaSeccionFactor();
+  const camposDetalle = 'cantidad, es_empaque' +
+    (conSub ? ', subreceta_id' : '') +
+    (conFactor ? ', seccion_factor' : '') +
+    ', ingredientes(costo_unitario)';
   const { data, error } = await supabaseClient
     .from('recetas')
-    .select('id, nombre, categoria, precio_venta, tamano_base_kg, escandallo_override, activo, detalle_receta(cantidad, es_empaque, ingredientes(costo_unitario))')
+    .select(`id, nombre, categoria, costo_base, precio_venta, tamano_base_kg, escandallo_override, activo, detalle_receta!detalle_receta_receta_id_fkey(${camposDetalle})`)
     .eq('activo', true)
     .order('nombre');
 
@@ -151,10 +157,14 @@ async function cargarRecetas() {
     return;
   }
 
+  const costosRecetas = new Map(data.map(r => [r.id, Number(r.costo_base) || 0]));
   RECETAS = data.map(r => {
     let mp = 0, empaque = 0;
     for (const d of (r.detalle_receta || [])) {
-      const costo = d.cantidad * (d.ingredientes?.costo_unitario || 0);
+      const unitario = d.subreceta_id
+        ? (costosRecetas.get(d.subreceta_id) || 0)
+        : Number(d.ingredientes?.costo_unitario || 0);
+      const costo = Number(d.cantidad) * unitario * (Number(d.seccion_factor) || 1);
       if (d.es_empaque) empaque += costo; else mp += costo;
     }
     return { ...r, costo_mp: mp, costo_empaque: empaque };
@@ -336,7 +346,8 @@ async function guardarUtilidad(inp) {
 
 function etiquetaTamano(kg) {
   const t = TAMANOS.find(t => Math.abs(t.kg - kg) < 0.01);
-  return t ? t.label : kg + ' kg';
+  const base = t ? t.label : kg + ' kg';
+  return t?.porciones ? `${base} (${t.porciones} porciones)` : base;
 }
 
 function filaEscalado(r) {
@@ -350,7 +361,7 @@ function filaEscalado(r) {
   const con = calcular(r, factor, true);
   const sin = calcular(r, factor, false);
   const botones = TAMANOS.map(t =>
-    `<button class="btn btn-outline btn-sm size-btn ${Math.abs(t.kg - sel) < 0.01 ? 'activo' : ''}" data-kg="${t.kg}">${t.label}</button>`
+    `<button class="btn btn-outline btn-sm size-btn ${Math.abs(t.kg - sel) < 0.01 ? 'activo' : ''}" data-kg="${t.kg}">${t.label}${t.porciones ? ` (${t.porciones} porciones)` : ''}</button>`
   ).join(' ');
   return `<tr class="escalado-panel"><td colspan="9">
     <div class="flex gap-8" style="flex-wrap:wrap; margin-bottom:10px;">

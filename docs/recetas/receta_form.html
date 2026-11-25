@@ -9,10 +9,19 @@
 <link rel="stylesheet" href="../shared/style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
-  .ing-row { display:flex; gap:8px; align-items:flex-end; margin-bottom:10px; }
-  .ing-row .field { margin-bottom:0; flex:1; }
-  .ing-row .field.cantidad { max-width:140px; }
+  .seccion-form { border:1px solid var(--pink-light); border-radius:12px; padding:12px 14px; margin-bottom:12px; background:#fff; }
+  .seccion-head { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:10px; }
+  .seccion-head .field { flex:1; margin-bottom:0; min-width:180px; }
+  .seccion-head .field.factor { max-width:150px; }
+  .seccion-head .btn { height:44px; }
+  .ing-row { display:flex; gap:8px; align-items:flex-end; margin-bottom:8px; flex-wrap:wrap; }
+  .ing-row .field { margin-bottom:0; flex:1 1 180px; }
+  .ing-row .field.cantidad { max-width:120px; }
+  .ing-row .empaque { flex:0 0 auto; height:44px; display:flex; align-items:center; gap:4px; font-size:12px; white-space:nowrap; }
   .ing-row .btn-quitar { flex-shrink:0; height:44px; }
+  .ing-row .row-costo { flex:0 0 70px; height:44px; display:flex; align-items:center; justify-content:flex-end; font-size:12px; color:var(--pink-dark); }
+  .seccion-foot { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  .seccion-subtotal { font-size:13px; color:var(--pink-dark); font-weight:600; }
   .costo-preview { background:var(--pink-pale); border-radius:12px; padding:14px 18px; margin-top:16px; }
   .costo-preview .valor { font-family:'Bodoni Moda',serif; font-size:24px; font-weight:700; color:var(--pink-dark); }
 </style>
@@ -62,13 +71,19 @@
         <textarea id="descripcion" rows="2"></textarea>
       </div>
 
-      <div class="section-title" style="font-size:16px; padding:16px 0 10px;">Ingredientes</div>
-      <div id="ingredientesWrap"></div>
-      <button type="button" class="btn btn-secondary btn-sm" id="btnAgregarIng">+ Agregar ingrediente</button>
-      <div class="error-text" id="errorIngredientes">Agrega al menos un ingrediente con cantidad mayor a 0.</div>
+      <div class="section-title" style="font-size:16px; padding:16px 0 10px;">Sub-secciones de la receta</div>
+      <div class="hint" style="margin-bottom:12px;">
+        Cada sub-sección tiene un nombre (ej: Bizcocho, Crema Pastelera, Decorado), sus propios
+        ingredientes y una cantidad utilizada. Ej: 0.5 = usás la mitad de esa sub-sección;
+        el costo es (suma de ingredientes) × cantidad utilizada.
+      </div>
+      <datalist id="seccionesList"></datalist>
+      <div id="seccionesWrap"></div>
+      <button type="button" class="btn btn-secondary btn-sm" id="btnAgregarSeccion">+ Agregar sub-sección</button>
+      <div class="error-text" id="errorIngredientes">Agrega al menos una sub-sección con un ingrediente válido.</div>
 
       <div class="costo-preview">
-        <div class="hint">Costo base estimado (solo materia prima directa)</div>
+        <div class="hint">Costo base estimado (suma de todas las sub-secciones)</div>
         <div class="valor" id="costoPreview">$0.00</div>
         <div class="hint">El valor definitivo lo calcula el sistema al guardar.</div>
       </div>
@@ -99,37 +114,86 @@ async function init() {
     return;
   }
 
-  await cargarIngredientesDisponibles();
+  await Promise.all([cargarIngredientesDisponibles(), cargarSeccionesSugeridas()]);
 
   if (RECETA_ID) {
     document.getElementById('tituloPagina').textContent = 'Editar Receta';
     await cargarReceta(RECETA_ID);
   } else {
-    agregarFilaIngrediente();
+    agregarSeccion('General');
   }
 }
 
 async function cargarIngredientesDisponibles() {
   const { data, error } = await supabaseClient
     .from('ingredientes')
-    .select('id, nombre, unidad_medida, costo_unitario')
+    .select('id, nombre, unidad_medida, costo_unitario, categoria')
     .eq('activo', true)
     .order('nombre');
   if (error) {
     toast('No se pudieron cargar los ingredientes', 'error');
     return;
   }
-  INGREDIENTES_DISPONIBLES = data;
+  INGREDIENTES_DISPONIBLES = data || [];
+}
+
+async function cargarSeccionesSugeridas() {
+  const { data } = await supabaseClient
+    .from('recetas')
+    .select('detalle_receta!detalle_receta_receta_id_fkey(seccion)');
+  const nombres = new Set();
+  (data || []).forEach(r =>
+    (r.detalle_receta || []).forEach(d => { if (d.seccion) nombres.add(d.seccion); })
+  );
+  document.getElementById('seccionesList').innerHTML =
+    [...nombres].sort().map(s => `<option value="${escapeHtml(s)}"></option>`).join('');
 }
 
 function opcionesIngredientes(seleccionadoId) {
-  return INGREDIENTES_DISPONIBLES.map(ing =>
-    `<option value="${ing.id}" ${ing.id === seleccionadoId ? 'selected' : ''}>${escapeHtml(ing.nombre)} (${ing.unidad_medida})</option>`
+  return INGREDIENTES_DISPONIBLES.map(i =>
+    `<option value="${i.id}" ${i.id === seleccionadoId ? 'selected' : ''}>${escapeHtml(i.nombre)} (${escapeHtml(i.unidad_medida)})</option>`
   ).join('');
 }
 
-function agregarFilaIngrediente(ingredienteId = '', cantidad = '') {
-  const wrap = document.getElementById('ingredientesWrap');
+function agregarSeccion(nombre = '', filas = [], factor = 1) {
+  const wrap = document.getElementById('seccionesWrap');
+  const sec = document.createElement('div');
+  sec.className = 'seccion-form';
+  sec.innerHTML = `
+    <div class="seccion-head">
+      <div class="field">
+        <label>Nombre de la sub-sección</label>
+        <input type="text" class="sec-nombre" list="seccionesList" value="${escapeHtml(nombre)}" placeholder="Ej: Bizcocho">
+      </div>
+      <div class="field factor">
+        <label>Cantidad utilizada</label>
+        <input type="number" class="sec-factor" min="0.0001" step="0.0001" value="${factor}" title="Veces o fracción de la sub-sección que se usa">
+      </div>
+      <button type="button" class="btn btn-danger btn-sm btn-quitar-sec">Quitar sección</button>
+    </div>
+    <div class="sec-filas"></div>
+    <div class="seccion-foot">
+      <button type="button" class="btn btn-secondary btn-sm btn-agregar-ing">+ Agregar ingrediente</button>
+      <span class="seccion-subtotal">Subtotal: $0.00</span>
+    </div>
+  `;
+  sec.querySelector('.btn-quitar-sec').addEventListener('click', () => { sec.remove(); actualizarCostos(); });
+  sec.querySelector('.btn-agregar-ing').addEventListener('click', () => agregarFilaIngrediente(sec));
+  sec.querySelector('.sec-nombre').addEventListener('input', actualizarCostos);
+  sec.querySelector('.sec-factor').addEventListener('input', actualizarCostos);
+  wrap.appendChild(sec);
+
+  if (filas.length) {
+    filas.forEach(f => agregarFilaIngrediente(sec, f.ingrediente_id, f.cantidad));
+  } else {
+    agregarFilaIngrediente(sec);
+  }
+  return sec;
+}
+
+function agregarFilaIngrediente(sec, ingredienteId = '', cantidad = '') {
+  const wrap = sec.querySelector('.sec-filas');
+  const ing = INGREDIENTES_DISPONIBLES.find(i => i.id === ingredienteId);
   const row = document.createElement('div');
   row.className = 'ing-row';
   row.innerHTML = `
@@ -141,32 +205,61 @@ function agregarFilaIngrediente(ingredienteId = '', cantidad = '') {
       <label>Cantidad</label>
       <input type="number" class="ing-cantidad" min="0.0001" step="0.0001" value="${cantidad}">
     </div>
+    <label class="empaque" title="Se toma automáticamente de la categoría del ingrediente">
+      <input type="checkbox" class="ing-empaque" ${ing?.categoria === 'empaque' ? 'checked' : ''} disabled> Empaque
+    </label>
+    <span class="row-costo" title="Costo de esta fila"></span>
     <button type="button" class="btn btn-danger btn-sm btn-quitar">Quitar</button>
   `;
-  row.querySelector('.btn-quitar').addEventListener('click', () => { row.remove(); actualizarCostoPreview(); });
-  row.querySelector('.ing-select').addEventListener('change', actualizarCostoPreview);
-  row.querySelector('.ing-cantidad').addEventListener('input', actualizarCostoPreview);
+  row.querySelector('.btn-quitar').addEventListener('click', () => { row.remove(); actualizarCostos(); });
+  row.querySelector('.ing-select').addEventListener('change', () => {
+    const elegido = INGREDIENTES_DISPONIBLES.find(i => i.id === row.querySelector('.ing-select').value);
+    row.querySelector('.ing-empaque').checked = elegido?.categoria === 'empaque';
+    actualizarCostos();
+  });
+  row.querySelector('.ing-cantidad').addEventListener('input', actualizarCostos);
   wrap.appendChild(row);
-  actualizarCostoPreview();
+  actualizarCostos();
 }
 
-function leerFilasIngredientes() {
-  return [...document.querySelectorAll('.ing-row')].map(row => ({
-    ingrediente_id: row.querySelector('.ing-select').value,
-    cantidad: parseFloat(row.querySelector('.ing-cantidad').value)
-  })).filter(f => f.ingrediente_id && !isNaN(f.cantidad) && f.cantidad > 0);
+function leerSecciones() {
+  return [...document.querySelectorAll('.seccion-form')].map(sec => ({
+    nombre: sec.querySelector('.sec-nombre').value.trim() || 'General',
+    factor: parseFloat(sec.querySelector('.sec-factor').value),
+    filas: [...sec.querySelectorAll('.ing-row')].map(row => {
+      const id = row.querySelector('.ing-select').value;
+      const cantidad = parseFloat(row.querySelector('.ing-cantidad').value);
+      return {
+        ingrediente_id: id,
+        cantidad,
+        es_empaque: row.querySelector('.ing-empaque').checked
+      };
+    }).filter(f => f.ingrediente_id && !isNaN(f.cantidad) && f.cantidad > 0)
+  }));
 }
 
-function actualizarCostoPreview() {
-  const filas = leerFilasIngredientes();
-  const total = filas.reduce((acc, f) => {
-    const ing = INGREDIENTES_DISPONIBLES.find(i => i.id === f.ingrediente_id);
-    return acc + (ing ? ing.costo_unitario * f.cantidad : 0);
-  }, 0);
+function actualizarCostos() {
+  let total = 0;
+  document.querySelectorAll('.seccion-form').forEach(sec => {
+    let base = 0;
+    sec.querySelectorAll('.ing-row').forEach(row => {
+      const id = row.querySelector('.ing-select').value;
+      const cantidad = parseFloat(row.querySelector('.ing-cantidad').value);
+      const ing = INGREDIENTES_DISPONIBLES.find(i => i.id === id);
+      const costo = ing && !isNaN(cantidad) && cantidad > 0 ? ing.costo_unitario * cantidad : 0;
+      base += costo;
+      row.querySelector('.row-costo').textContent = '$' + costo.toFixed(2);
+    });
+    const factor = parseFloat(sec.querySelector('.sec-factor').value);
+    const aplicado = base * (!isNaN(factor) && factor > 0 ? factor : 0);
+    total += aplicado;
+    sec.querySelector('.seccion-subtotal').textContent =
+      `Subtotal: $${aplicado.toFixed(2)} (base $${base.toFixed(2)} × ${!isNaN(factor) ? factor : 0})`;
+  });
   document.getElementById('costoPreview').textContent = '$' + total.toFixed(2);
 }
 
-document.getElementById('btnAgregarIng').addEventListener('click', () => agregarFilaIngrediente());
+document.getElementById('btnAgregarSeccion').addEventListener('click', () => agregarSeccion(''));
 
 async function cargarReceta(id) {
   const { data: receta, error } = await supabaseClient.from('recetas').select('*').eq('id', id).single();
@@ -182,20 +275,38 @@ async function cargarReceta(id) {
 
   const { data: detalle } = await supabaseClient
     .from('detalle_receta')
-    .select('ingrediente_id, cantidad')
+    .select('ingrediente_id, cantidad, seccion, es_empaque, seccion_factor')
     .eq('receta_id', id);
 
-  document.getElementById('ingredientesWrap').innerHTML = '';
-  if (detalle && detalle.length) {
-    detalle.forEach(d => agregarFilaIngrediente(d.ingrediente_id, d.cantidad));
-  } else {
-    agregarFilaIngrediente();
+  document.getElementById('seccionesWrap').innerHTML = '';
+  const grupos = new Map();
+  (detalle || []).forEach(d => {
+    const nombre = d.seccion || 'General';
+    if (!grupos.has(nombre)) grupos.set(nombre, { filas: [], factor: Number(d.seccion_factor) || 1 });
+    grupos.get(nombre).filas.push(d);
+  });
+  if (!grupos.size) {
+    agregarSeccion('General');
+    return;
   }
+  for (const [nombre, grupo] of grupos) {
+    agregarSeccion(nombre, grupo.filas.map(f => ({
+      ingrediente_id: f.ingrediente_id,
+      cantidad: f.cantidad,
+      es_empaque: f.es_empaque
+    })), grupo.factor);
+  }
+  const nombres = document.getElementById('seccionesList');
+  [...grupos.keys()].forEach(n => {
+    if (![...nombres.options].some(o => o.value === n)) {
+      nombres.appendChild(new Option(n, n));
+    }
+  });
 }
 
 function escapeHtml(str) {
   const div = document.createElement('div');
-  div.textContent = str;
+  div.textContent = str == null ? '' : String(str);
   return div.innerHTML;
 }
 
@@ -211,7 +322,10 @@ document.getElementById('formReceta').addEventListener('submit', async (e) => {
   const categoria = document.getElementById('categoria').value;
   const porciones = parseInt(document.getElementById('porciones').value, 10);
   const descripcion = document.getElementById('descripcion').value.trim();
-  const filas = leerFilasIngredientes();
+  const secciones = leerSecciones();
+  const filas = secciones.flatMap(s => s.filas.map(f => ({
+    ...f, seccion: s.nombre, seccion_factor: s.factor
+  })));
 
   if (!nombre || !categoria || isNaN(porciones) || porciones < 1) {
     errorGeneral.textContent = 'Completa nombre, categoría y porciones (mayor a 0).';
@@ -222,10 +336,15 @@ document.getElementById('formReceta').addEventListener('submit', async (e) => {
     errorIng.classList.add('show');
     return;
   }
-  // Evitar ingrediente duplicado en la misma receta (coincide con la restricción UNIQUE en BD)
-  const idsUnicos = new Set(filas.map(f => f.ingrediente_id));
-  if (idsUnicos.size !== filas.length) {
-    errorGeneral.textContent = 'No repitas el mismo ingrediente en dos filas distintas.';
+  if (secciones.some(s => isNaN(s.factor) || s.factor <= 0)) {
+    errorGeneral.textContent = 'La cantidad utilizada de cada sub-sección debe ser mayor a 0.';
+    errorGeneral.classList.add('show');
+    return;
+  }
+  // La BD tiene UNIQUE (receta_id, ingrediente_id): no repetir ingrediente en ninguna sección.
+  const ids = filas.map(f => f.ingrediente_id);
+  if (new Set(ids).size !== ids.length) {
+    errorGeneral.textContent = 'No repitas el mismo ingrediente en dos filas (ni en otra sub-sección).';
     errorGeneral.classList.add('show');
     return;
   }
@@ -248,11 +367,18 @@ document.getElementById('formReceta').addEventListener('submit', async (e) => {
       idFinal = nueva.id;
     }
 
-    // Reemplazar el detalle completo: simple y consistente para un formulario pequeño
+    // Reemplazar el detalle completo para reflejar las sub-secciones actuales.
     const { error: delError } = await supabaseClient.from('detalle_receta').delete().eq('receta_id', idFinal);
     if (delError) throw delError;
 
-    const filasInsert = filas.map(f => ({ receta_id: idFinal, ingrediente_id: f.ingrediente_id, cantidad: f.cantidad }));
+    const filasInsert = filas.map(f => ({
+      receta_id: idFinal,
+      ingrediente_id: f.ingrediente_id,
+      cantidad: f.cantidad,
+      seccion: f.seccion,
+      seccion_factor: f.seccion_factor,
+      es_empaque: f.es_empaque
+    }));
     const { error: insError } = await supabaseClient.from('detalle_receta').insert(filasInsert);
     if (insError) throw insError;
 

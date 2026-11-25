@@ -18,6 +18,7 @@
 .periodo-btn.activo { background: var(--pink); color:#fff; border-color: var(--pink); }
 .periodo-btn-rot.activo { background: var(--pink); color:#fff; border-color: var(--pink); }
 .periodo-btn-fin.activo { background: var(--pink); color:#fff; border-color: var(--pink); }
+.origen-btn.activo { background: var(--pink); color:#fff; border-color: var(--pink); }
 .reporte-titulo { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; }
 .valor-grande { font-family:'Bodoni Moda',serif; font-size:26px; font-weight:700; color:var(--pink-dark); margin-top:4px; }
 @media print {
@@ -52,7 +53,10 @@
     <div class="reporte-titulo mt-16">
       <div>
         <div class="section-title" style="padding-top:0;">Rentabilidad por receta</div>
-        <div class="hint">Costo y precio actuales (no depende de un periodo). Ordenado de peor a mejor margen.</div>
+        <div class="hint">
+          Costo total con escandallo (materia prima + empaque + equipos + mano de obra + carga social + imprevistos
+          + administración) y precio actuales. Margen calculado sobre el precio de venta. Ordenado de peor a mejor.
+        </div>
       </div>
       <div class="flex gap-8 no-print">
         <select id="filtroCategoriaRent" class="mini-input" style="width:160px;">
@@ -66,7 +70,7 @@
     </div>
     <div class="table-wrap mt-16">
       <table>
-        <thead><tr><th>Receta</th><th>Categoría</th><th>Costo base</th><th>Precio venta</th><th>Margen</th></tr></thead>
+        <thead><tr><th>Receta</th><th>Categoría</th><th>Costo total</th><th>Precio venta</th><th>Margen sobre venta</th></tr></thead>
         <tbody id="tbodyRentabilidad"><tr><td colspan="5"><div class="loading-state">Cargando...</div></td></tr></tbody>
       </table>
     </div>
@@ -86,8 +90,16 @@
         <input type="date" id="consumoDesde" class="mini-input">
         <span class="hint">a</span>
         <input type="date" id="consumoHasta" class="mini-input">
+        <span class="hint">|</span>
+        <button class="btn btn-outline btn-sm origen-btn activo" data-origen="todas">Todas</button>
+        <button class="btn btn-outline btn-sm origen-btn" data-origen="produccion">Producción</button>
+        <button class="btn btn-outline btn-sm origen-btn" data-origen="otras">Otras salidas</button>
         <button class="btn btn-outline btn-sm" onclick="window.print()">🖨 Descargar PDF</button>
       </div>
+    </div>
+    <div class="hint mt-8">
+      Salidas de inventario. “Producción” son los descuentos automáticos al confirmar tortas; “Otras salidas” incluye
+      mermas y ajustes manuales. El valor se calcula con el costo unitario actual, no el histórico.
     </div>
     <div class="table-wrap mt-16">
       <table>
@@ -114,11 +126,14 @@
         <button class="btn btn-outline btn-sm" onclick="window.print()">🖨 Descargar PDF</button>
       </div>
     </div>
-    <div class="hint mt-8">Solo incluye lotes ya retirados de exhibición en el periodo (para calcular cuánto tardaron en salir).</div>
+    <div class="hint mt-8">
+      Incluye lotes ya retirados de exhibición en el periodo. Los retiros se separan en <strong>Vendidos</strong> y
+      <strong>Pérdidas</strong> (daño o tiempo en exhibición); los envíos a otra sede no cuentan.
+    </div>
     <div class="table-wrap mt-16">
       <table>
-        <thead><tr><th>Receta</th><th>Lotes retirados</th><th>Días promedio en exhibición</th><th>Alertas de vencimiento</th></tr></thead>
-        <tbody id="tbodyRotacion"><tr><td colspan="4"><div class="loading-state">Cargando...</div></td></tr></tbody>
+        <thead><tr><th>Receta</th><th>Und. vendidas</th><th>Und. perdidas</th><th>Motivos / notas</th><th>Días promedio en exhibición</th><th>Alertas de vencimiento</th></tr></thead>
+        <tbody id="tbodyRotacion"><tr><td colspan="6"><div class="loading-state">Cargando...</div></td></tr></tbody>
       </table>
     </div>
   </div>
@@ -141,8 +156,10 @@
       </div>
     </div>
     <div class="hint mt-8">
-      Ventas: lotes marcados como "vendido" en el periodo, a precio de venta actual. Gastos: producción cargada a Inventario en el periodo, a costo base actual.
-      Ambos son aproximaciones con el precio/costo de hoy, no el histórico exacto del momento.
+      Ventas: lotes retirados como “vendido” en el periodo, a precio de venta actual. Pérdidas: retiros por daño,
+      exhibición o merma. Costo retirado: unidades vendidas + perdidas valuadas con el <strong>mismo costo total que
+      Rentabilidad</strong>, para que ambos reportes cuadren. La producción del periodo se muestra aparte, como contexto.
+      Precio y costo son los actuales, no los históricos del momento.
     </div>
 
     <div class="flex gap-16 mt-16" style="flex-wrap:wrap;">
@@ -151,11 +168,15 @@
         <div class="valor-grande" id="finVentasTotal">—</div>
       </div>
       <div class="panel" style="flex:1; min-width:160px;">
-        <div class="hint">Gastos de producción</div>
+        <div class="hint">Pérdidas</div>
+        <div class="valor-grande margen-neg" id="finPerdidasTotal">—</div>
+      </div>
+      <div class="panel" style="flex:1; min-width:160px;">
+        <div class="hint">Costo retirado (ventas + pérdidas)</div>
         <div class="valor-grande" id="finGastosTotal">—</div>
       </div>
       <div class="panel" style="flex:1; min-width:160px;">
-        <div class="hint">Margen</div>
+        <div class="hint">Margen neto (ventas − costo retirado)</div>
         <div class="valor-grande" id="finMargenTotal">—</div>
       </div>
     </div>
@@ -164,9 +185,10 @@
       <table>
         <thead><tr>
           <th>Receta</th><th>Unidades vendidas</th><th>Ventas</th>
-          <th>Unidades producidas</th><th>Gastos</th><th>Margen</th>
+          <th>Unidades perdidas</th><th>Costo pérdidas</th>
+          <th>Unidades producidas</th><th>Costo retirado</th><th>Margen neto</th>
         </tr></thead>
-        <tbody id="tbodyFinanzas"><tr><td colspan="6"><div class="loading-state">Cargando...</div></td></tr></tbody>
+        <tbody id="tbodyFinanzas"><tr><td colspan="8"><div class="loading-state">Cargando...</div></td></tr></tbody>
       </table>
     </div>
   </div>
@@ -177,6 +199,8 @@
 const CATEGORIA_LABEL = { racion: 'Ración', torta_entera: 'Torta Entera', bebida: 'Bebida' };
 let PARAMS = null;
 let RENTABILIDAD = [];
+let COSTOS_TOTALES = new Map();
+let CONSUMO_ORIGEN = 'todas';
 let ES_ADMIN = false;
 
 async function init() {
@@ -192,9 +216,15 @@ async function init() {
 
   document.querySelectorAll('.tabs .tab-btn').forEach(b => b.addEventListener('click', () => cambiarTab(b.dataset.tab)));
   document.getElementById('filtroCategoriaRent').addEventListener('change', renderRentabilidad);
+  document.querySelectorAll('.origen-btn').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.origen-btn').forEach(x => x.classList.remove('activo'));
+    b.classList.add('activo');
+    CONSUMO_ORIGEN = b.dataset.origen;
+    cargarConsumo();
+  }));
 
-  const { data: params } = await supabaseClient.from('escandallo_parametros').select('*').eq('id', 1).single();
-  PARAMS = params;
+  const { data: params } = await supabaseClient.from('escandallo_parametros').select('*').eq('id', 1).maybeSingle();
+  PARAMS = params || { equipos: 0, mano_obra: 0, carga_social: 0, imprevisto_pct: 0, costos_admin: 0 };
 
   configurarPeriodo('consumo', document.querySelectorAll('.periodo-btn'), 'consumoDesde', 'consumoHasta', 'periodoConsumoTexto', cargarConsumo);
   configurarPeriodo('rotacion', document.querySelectorAll('.periodo-btn-rot'), 'rotacionDesde', 'rotacionHasta', 'periodoRotacionTexto', cargarRotacion);
@@ -262,9 +292,15 @@ function actualizarTextoPeriodo(idTexto, desde, hasta) {
 
 async function cargarRentabilidad() {
   const tbody = document.getElementById('tbodyRentabilidad');
+  const conSub = await soportaSubrecetas();
+  const conFactor = await soportaSeccionFactor();
+  const camposDetalle = 'cantidad, es_empaque' +
+    (conSub ? ', subreceta_id' : '') +
+    (conFactor ? ', seccion_factor' : '') +
+    ', ingredientes(costo_unitario)';
   const { data, error } = await supabaseClient
     .from('recetas')
-    .select('id, nombre, categoria, precio_venta, activo, detalle_receta(cantidad, es_empaque, ingredientes(costo_unitario))')
+    .select(`id, nombre, categoria, costo_base, precio_venta, activo, detalle_receta!detalle_receta_receta_id_fkey(${camposDetalle})`)
     .eq('activo', true);
 
   if (error) {
@@ -272,18 +308,23 @@ async function cargarRentabilidad() {
     return;
   }
 
+  const costosRecetas = new Map(data.map(r => [r.id, Number(r.costo_base) || 0]));
   RENTABILIDAD = data.map(r => {
     let mp = 0, empaque = 0;
     for (const d of (r.detalle_receta || [])) {
-      const costo = d.cantidad * (d.ingredientes?.costo_unitario || 0);
+      const unitario = d.subreceta_id
+        ? (costosRecetas.get(d.subreceta_id) || 0)
+        : Number(d.ingredientes?.costo_unitario || 0);
+      const costo = Number(d.cantidad) * unitario * (Number(d.seccion_factor) || 1);
       if (d.es_empaque) empaque += costo; else mp += costo;
     }
     const mp_total = mp + empaque;
     const directo = mp_total + (+PARAMS.equipos) + (+PARAMS.mano_obra) + (+PARAMS.carga_social);
     const costo_total = directo * (1 + PARAMS.imprevisto_pct / 100) + (+PARAMS.costos_admin);
-    const margen = r.precio_venta != null && costo_total > 0 ? ((r.precio_venta - costo_total) / costo_total) * 100 : null;
+    const margen = Number(r.precio_venta) > 0 ? ((Number(r.precio_venta) - costo_total) / Number(r.precio_venta)) * 100 : null;
     return { ...r, costo_total, margen };
   });
+  COSTOS_TOTALES = new Map(RENTABILIDAD.map(r => [r.id, r.costo_total]));
   renderRentabilidad();
 }
 
@@ -310,6 +351,11 @@ function renderRentabilidad() {
   }).join('');
 }
 
+// Costo total calculado en Rentabilidad; si la receta no está activa, usa costo_base como fallback.
+function costoReceta(recetaId, costoBase) {
+  return COSTOS_TOTALES.get(recetaId) ?? (Number(costoBase) || 0);
+}
+
 /* ── CONSUMO DE MATERIA PRIMA ── */
 let CONSUMO_CARGADO = false;
 
@@ -319,12 +365,15 @@ async function cargarConsumo() {
   const desde = document.getElementById('consumoDesde').value;
   const hasta = document.getElementById('consumoHasta').value;
 
-  const { data, error } = await supabaseClient
+  let query = supabaseClient
     .from('movimientos_inventario')
-    .select('cantidad, ingredientes(nombre, unidad_medida, costo_unitario)')
+    .select('ingrediente_id, cantidad, ingredientes(nombre, unidad_medida, costo_unitario)')
     .eq('tipo', 'salida')
     .gte('created_at', desde + 'T00:00:00')
     .lte('created_at', hasta + 'T23:59:59');
+  if (CONSUMO_ORIGEN === 'produccion') query = query.eq('origen', 'produccion');
+  else if (CONSUMO_ORIGEN === 'otras') query = query.or('origen.is.null,origen.neq.produccion');
+  const { data, error } = await query;
 
   if (error) {
     tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
@@ -334,11 +383,15 @@ async function cargarConsumo() {
 
   const agrupado = new Map();
   for (const m of data) {
-    const nombre = m.ingredientes?.nombre || '—';
-    if (!agrupado.has(nombre)) {
-      agrupado.set(nombre, { nombre, unidad: m.ingredientes?.unidad_medida || '', cantidad: 0, valor: 0, movimientos: 0 });
+    const id = m.ingrediente_id;
+    if (!agrupado.has(id)) {
+      agrupado.set(id, {
+        nombre: m.ingredientes?.nombre || '—',
+        unidad: m.ingredientes?.unidad_medida || '',
+        cantidad: 0, valor: 0, movimientos: 0,
+      });
     }
-    const g = agrupado.get(nombre);
+    const g = agrupado.get(id);
     g.cantidad += Number(m.cantidad);
     g.valor += Number(m.cantidad) * Number(m.ingredientes?.costo_unitario || 0);
     g.movimientos += 1;
@@ -366,59 +419,76 @@ let ROTACION_CARGADO = false;
 
 async function cargarRotacion() {
   const tbody = document.getElementById('tbodyRotacion');
-  tbody.innerHTML = `<tr><td colspan="4"><div class="loading-state">Cargando...</div></td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="6"><div class="loading-state">Cargando...</div></td></tr>`;
   const desde = document.getElementById('rotacionDesde').value;
   const hasta = document.getElementById('rotacionHasta').value;
 
   const { data, error } = await supabaseClient
     .from('lotes')
-    .select('receta_id, fecha_ingreso, retirado_at, motivo_retiro, recetas(nombre)')
+    .select('id, receta_id, cantidad, fecha_ingreso, retirado_at, motivo_retiro, retiro_nota, recetas(nombre)')
     .not('retirado_at', 'is', null)
     .or('motivo_retiro.is.null,motivo_retiro.neq.transferido')
     .gte('retirado_at', desde + 'T00:00:00')
     .lte('retirado_at', hasta + 'T23:59:59');
 
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">Error al cargar: ${escapeHtml(error.message)}</div></td></tr>`;
     return;
   }
   ROTACION_CARGADO = true;
 
   const agrupado = new Map();
   for (const l of data) {
-    const nombre = l.recetas?.nombre || '—';
+    const id = l.receta_id;
     const dias = Math.floor((new Date(l.retirado_at) - new Date(l.fecha_ingreso + 'T00:00:00')) / 86400000);
-    if (!agrupado.has(nombre)) agrupado.set(nombre, { nombre, lotes: 0, sumaDias: 0 });
-    const g = agrupado.get(nombre);
+    if (!agrupado.has(id)) {
+      agrupado.set(id, { nombre: l.recetas?.nombre || '—', lotes: 0, vendidos: 0, perdidas: 0, notas: [], alertas: 0, sumaDias: 0 });
+    }
+    const g = agrupado.get(id);
     g.lotes += 1;
     g.sumaDias += Math.max(dias, 0);
+    // Todo retiro que no sea venta ni transferencia se cuenta como pérdida.
+    if (l.motivo_retiro === 'vendido') g.vendidos += l.cantidad || 0;
+    else {
+      g.perdidas += l.cantidad || 0;
+      const motivo = { perdida_danado: 'Daño', perdida_exhibicion: 'Exhibición', merma: 'Merma' }[l.motivo_retiro] || 'Otro';
+      g.notas.push(`${motivo}${l.retiro_nota ? ': ' + l.retiro_nota : ''}`);
+    }
   }
 
-  // Alertas de vencimiento en el mismo periodo, agrupadas por texto de receta (aproximado por mensaje)
-  const { data: alertas } = await supabaseClient
-    .from('alertas')
-    .select('mensaje')
-    .eq('tipo', 'vencimiento')
-    .gte('created_at', desde + 'T00:00:00')
-    .lte('created_at', hasta + 'T23:59:59');
+  // Alertas de vencimiento contadas por lote (alertas.referencia_id = lotes.id).
+  const idsLotes = data.map(l => l.id);
+  if (idsLotes.length) {
+    const { data: alertas } = await supabaseClient
+      .from('alertas')
+      .select('referencia_id')
+      .eq('tipo', 'vencimiento')
+      .in('referencia_id', idsLotes)
+      .gte('created_at', desde + 'T00:00:00')
+      .lte('created_at', hasta + 'T23:59:59');
+    const porLote = new Map();
+    for (const a of (alertas || [])) porLote.set(a.referencia_id, (porLote.get(a.referencia_id) || 0) + 1);
+    for (const l of data) {
+      const g = agrupado.get(l.receta_id);
+      if (g) g.alertas += porLote.get(l.id) || 0;
+    }
+  }
 
   const lista = [...agrupado.values()]
-    .map(g => ({
-      ...g,
-      promedio: g.lotes ? g.sumaDias / g.lotes : 0,
-      alertas: (alertas || []).filter(a => a.mensaje.startsWith(g.nombre)).length,
-    }))
+    .map(g => ({ ...g, promedio: g.lotes ? g.sumaDias / g.lotes : 0 }))
     .sort((a, b) => b.promedio - a.promedio);
 
   if (!lista.length) {
-    tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state">No hay lotes retirados en este periodo.</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No hay lotes retirados en este periodo.</div></td></tr>`;
     return;
   }
 
   tbody.innerHTML = lista.map(g => `
     <tr>
       <td class="wrap">${escapeHtml(g.nombre)}</td>
-      <td>${g.lotes}</td>
+      <td>${g.vendidos}</td>
+      <td class="${g.perdidas ? 'margen-neg' : ''}">${g.perdidas}</td>
+      <td class="wrap">${g.notas.length ? escapeHtml([...new Set(g.notas)].join(' · ')) : '—'}</td>
       <td>${g.promedio.toFixed(1)} día(s)</td>
       <td>${g.alertas}</td>
     </tr>
@@ -430,76 +500,102 @@ let FINANZAS_CARGADO = false;
 
 async function cargarFinanzas() {
   const tbody = document.getElementById('tbodyFinanzas');
-  tbody.innerHTML = `<tr><td colspan="6"><div class="loading-state">Cargando...</div></td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="8"><div class="loading-state">Cargando...</div></td></tr>`;
   const desde = document.getElementById('finanzasDesde').value;
   const hasta = document.getElementById('finanzasHasta').value;
 
-  const [{ data: ventas, error: errVentas }, { data: gastos, error: errGastos }] = await Promise.all([
+  // Rentabilidad siempre se carga al iniciar; por si acaso, nos aseguramos de tener los costos totales.
+  if (!COSTOS_TOTALES.size) await cargarRentabilidad();
+
+  const [{ data: ventas, error: errVentas }, { data: perdidas, error: errPerdidas }, { data: producido, error: errProduccion }] = await Promise.all([
     supabaseClient
       .from('lotes')
-      .select('cantidad, receta_id, recetas(nombre, precio_venta)')
+      .select('cantidad, receta_id, recetas(nombre, precio_venta, costo_base)')
       .eq('motivo_retiro', 'vendido')
       .not('retirado_at', 'is', null)
       .gte('retirado_at', desde + 'T00:00:00')
       .lte('retirado_at', hasta + 'T23:59:59'),
     supabaseClient
+      .from('lotes')
+      .select('cantidad, receta_id, motivo_retiro, retiro_nota, recetas(nombre, costo_base)')
+      .in('motivo_retiro', ['merma', 'perdida_danado', 'perdida_exhibicion'])
+      .not('retirado_at', 'is', null)
+      .gte('retirado_at', desde + 'T00:00:00')
+      .lte('retirado_at', hasta + 'T23:59:59'),
+    supabaseClient
       .from('plan_items')
-      .select('cantidad_producida, cantidad_planificada, receta_id, recetas(nombre, costo_base), planes_produccion!inner(fecha_planificada)')
+      .select('cantidad_producida, cantidad_planificada, receta_id, recetas(nombre), planes_produccion!inner(fecha_planificada)')
       .eq('cargado_a_inventario', true)
       .gte('planes_produccion.fecha_planificada', desde)
       .lte('planes_produccion.fecha_planificada', hasta),
   ]);
 
-  if (errVentas || errGastos) {
-    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">Error al cargar: ${escapeHtml((errVentas || errGastos).message)}</div></td></tr>`;
+  const err = errVentas || errPerdidas || errProduccion;
+  if (err) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state">Error al cargar: ${escapeHtml(err.message)}</div></td></tr>`;
     return;
   }
   FINANZAS_CARGADO = true;
 
   const agrupado = new Map();
-  const getGrupo = (nombre) => {
-    if (!agrupado.has(nombre)) agrupado.set(nombre, { nombre, unidadesVendidas: 0, ventas: 0, unidadesProducidas: 0, gastos: 0 });
-    return agrupado.get(nombre);
+  const getGrupo = (id, nombre) => {
+    if (!agrupado.has(id)) agrupado.set(id, {
+      nombre, unidadesVendidas: 0, ventas: 0,
+      unidadesPerdidas: 0, costoPerdidas: 0, costoVendido: 0,
+      unidadesProducidas: 0, costoRetirado: 0,
+    });
+    return agrupado.get(id);
   };
 
   for (const l of (ventas || [])) {
-    const g = getGrupo(l.recetas?.nombre || '—');
+    const g = getGrupo(l.receta_id, l.recetas?.nombre || '—');
+    const costo = costoReceta(l.receta_id, l.recetas?.costo_base);
     g.unidadesVendidas += l.cantidad;
     g.ventas += l.cantidad * Number(l.recetas?.precio_venta || 0);
+    g.costoVendido += l.cantidad * costo;
   }
-  for (const it of (gastos || [])) {
-    const cantidad = it.cantidad_producida ?? it.cantidad_planificada;
-    const g = getGrupo(it.recetas?.nombre || '—');
-    g.unidadesProducidas += cantidad;
-    g.gastos += cantidad * Number(it.recetas?.costo_base || 0);
+  for (const l of (perdidas || [])) {
+    const g = getGrupo(l.receta_id, l.recetas?.nombre || '—');
+    g.unidadesPerdidas += l.cantidad;
+    g.costoPerdidas += l.cantidad * costoReceta(l.receta_id, l.recetas?.costo_base);
   }
+  for (const it of (producido || [])) {
+    const g = getGrupo(it.receta_id, it.recetas?.nombre || '—');
+    g.unidadesProducidas += it.cantidad_producida ?? it.cantidad_planificada;
+  }
+  for (const g of agrupado.values()) g.costoRetirado = g.costoVendido + g.costoPerdidas;
 
-  const lista = [...agrupado.values()].sort((a, b) => (b.ventas - b.gastos) - (a.ventas - a.gastos));
+  const margenDe = (g) => (g.unidadesVendidas || g.unidadesPerdidas) ? g.ventas - g.costoRetirado : null;
+  const lista = [...agrupado.values()].sort((a, b) => (margenDe(a) ?? 999) - (margenDe(b) ?? 999));
   const totalVentas = lista.reduce((s, g) => s + g.ventas, 0);
-  const totalGastos = lista.reduce((s, g) => s + g.gastos, 0);
+  const totalPerdidas = lista.reduce((s, g) => s + g.costoPerdidas, 0);
+  const totalGastos = lista.reduce((s, g) => s + g.costoRetirado, 0);
   const totalMargen = totalVentas - totalGastos;
 
   document.getElementById('finVentasTotal').textContent = `$${totalVentas.toFixed(2)}`;
+  document.getElementById('finPerdidasTotal').textContent = `$${totalPerdidas.toFixed(2)}`;
   document.getElementById('finGastosTotal').textContent = `$${totalGastos.toFixed(2)}`;
   const margenEl = document.getElementById('finMargenTotal');
   margenEl.textContent = `$${totalMargen.toFixed(2)}`;
   margenEl.className = 'valor-grande ' + (totalMargen < 0 ? 'margen-neg' : 'margen-ok');
 
   if (!lista.length) {
-    tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">No hay ventas ni producción cargada en este periodo.</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty-state">No hay ventas, pérdidas ni producción cargada en este periodo.</div></td></tr>`;
     return;
   }
 
   tbody.innerHTML = lista.map(g => {
-    const margen = g.ventas - g.gastos;
-    const claseMargen = margen < 0 ? 'margen-neg' : 'margen-ok';
+    const margen = margenDe(g);
+    const claseMargen = margen == null ? '' : (margen < 0 ? 'margen-neg' : 'margen-ok');
     return `<tr>
       <td class="wrap">${escapeHtml(g.nombre)}</td>
       <td>${g.unidadesVendidas}</td>
       <td>$${g.ventas.toFixed(2)}</td>
+      <td class="${g.unidadesPerdidas ? 'margen-neg' : ''}">${g.unidadesPerdidas}</td>
+      <td>$${g.costoPerdidas.toFixed(2)}</td>
       <td>${g.unidadesProducidas}</td>
-      <td>$${g.gastos.toFixed(2)}</td>
-      <td class="${claseMargen}">$${margen.toFixed(2)}</td>
+      <td>$${g.costoRetirado.toFixed(2)}</td>
+      <td class="${claseMargen}">${margen == null ? '—' : '$' + margen.toFixed(2)}</td>
     </tr>`;
   }).join('');
 }

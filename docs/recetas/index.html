@@ -44,8 +44,8 @@
 const CATEGORIA_LABEL = { racion: 'Ración', torta_entera: 'Torta Entera', bebida: 'Bebida' };
 const CATEGORIA_PLURAL = { racion: 'Raciones', torta_entera: 'Tortas Enteras', bebida: 'Bebidas' };
 const TAMANOS = [
-  { kg: 0.25, label: '1/4 kg' }, { kg: 0.333, label: '1/3 kg' },
-  { kg: 0.5, label: '1/2 kg' }, { kg: 1, label: '1 kg' },
+  { kg: 0.0625, label: '1/16 kg', porciones: 4 }, { kg: 0.125, label: '1/8 kg', porciones: 8 }, { kg: 0.25, label: '1/4 kg', porciones: 16 },
+  { kg: 0.333, label: '1/3 kg', porciones: 20 }, { kg: 0.5, label: '1/2 kg', porciones: 32 }, { kg: 1, label: '1 kg', porciones: 40 },
 ];
 let RECETAS = [];
 let PARAMS = null;
@@ -71,10 +71,16 @@ async function init() {
 
 async function cargarRecetas() {
   const cont = document.getElementById('grupos');
+  const conSub = await soportaSubrecetas();
+  const conFactor = await soportaSeccionFactor();
+  const camposDetalle = 'cantidad, es_empaque' +
+    (conSub ? ', subreceta_id' : '') +
+    (conFactor ? ', seccion_factor' : '') +
+    ', ingredientes(costo_unitario)';
   const [{ data, error }, { data: params }, { data: tasa }] = await Promise.all([
     supabaseClient
       .from('recetas')
-      .select('*, detalle_receta(cantidad, es_empaque, ingredientes(costo_unitario))')
+      .select(`*, detalle_receta!detalle_receta_receta_id_fkey(${camposDetalle})`)
       .order('nombre'),
     supabaseClient.from('escandallo_parametros').select('*').eq('id', 1).single(),
     supabaseClient.from('tasa_cambio').select('*').eq('id', 1).single(),
@@ -86,10 +92,14 @@ async function cargarRecetas() {
   }
   PARAMS = params;
   TASA = tasa;
+  const costosRecetas = new Map(data.map(r => [r.id, Number(r.costo_base) || 0]));
   RECETAS = data.map(r => {
     let mp = 0, empaque = 0;
     for (const d of (r.detalle_receta || [])) {
-      const costo = d.cantidad * (d.ingredientes?.costo_unitario || 0);
+      const unitario = d.subreceta_id
+        ? (costosRecetas.get(d.subreceta_id) || 0)
+        : Number(d.ingredientes?.costo_unitario || 0);
+      const costo = Number(d.cantidad) * unitario * (Number(d.seccion_factor) || 1);
       if (d.es_empaque) empaque += costo; else mp += costo;
     }
     return { ...r, costo_mp: mp, costo_empaque: empaque, num_ingredientes: (r.detalle_receta || []).length };
@@ -145,7 +155,6 @@ function render(lista) {
           <td>
             <a class="btn btn-outline btn-sm" href="ficha_tecnica.html?id=${r.id}">Ficha</a>
             ${VER_DINERO ? `<button class="btn btn-outline btn-sm precios-btn" data-id="${r.id}">${PRECIOS_ABIERTOS === r.id ? '▴ Precios' : '▾ Precios'}</button>` : ''}
-            ${PUEDE_ESCRIBIR ? `<a class="btn btn-outline btn-sm" href="receta_form.html?id=${r.id}">Editar</a>` : ''}
           </td>
         </tr>` + (VER_DINERO && PRECIOS_ABIERTOS === r.id ? filaPrecios(r) : '')).join('') + `</tbody></table></div>`;
   }
@@ -176,7 +185,7 @@ function filaPrecios(r) {
     const e = precioSugerido(r, factor);
     const esBase = Math.abs(t.kg - r.tamano_base_kg) < 0.01;
     return `<tr>
-      <td>${t.label}${esBase ? ' <span class="badge badge-ok">base</span>' : ''}</td>
+      <td>${t.label}${t.porciones ? ` (${t.porciones} porciones)` : ''}${esBase ? ' <span class="badge badge-ok">base</span>' : ''}</td>
       <td>$${e.costo.toFixed(2)}${fmtBs(e.costo)}</td>
       <td><strong>$${e.sugerido.toFixed(2)}</strong>${fmtBs(e.sugerido)}</td>
       ${esBase ? `<td>${r.precio_venta != null ? '$' + Number(r.precio_venta).toFixed(2) + fmtBs(r.precio_venta) : '—'}</td>` : '<td>—</td>'}

@@ -38,6 +38,18 @@
     </div>
   </div>
 
+  <div id="incidenciasPanel" style="display:none;">
+    <div class="flex-between mt-24" style="flex-wrap:wrap; gap:8px;">
+      <div class="section-title" style="margin:0; padding:0; flex:1;">Productos no cargados a Inventario</div>
+      <span class="hint">Solo el administrador puede borrar estas notas</span>
+    </div>
+    <div class="panel">
+      <div class="alert-list" id="incidenciasList">
+        <div class="loading-state" style="padding:10px;">Cargando...</div>
+      </div>
+    </div>
+  </div>
+
   <div class="section-title mt-24">Módulos</div>
   <div class="modules-grid" id="modulesGrid" style="display:none;">
     <a class="module-card" href="recetas/index.html" style="text-decoration:none;" id="cardRecetas">
@@ -111,6 +123,11 @@ let PUEDE_RESOLVER = false;
   }
   document.getElementById('modulesGrid').style.display = '';
 
+  if (esAdmin) {
+    document.getElementById('incidenciasPanel').style.display = '';
+    cargarIncidencias();
+  }
+
   await verificarAlertasInventario(ctx.perfil);
   cargarAlertas();
   cargarTasa();
@@ -180,6 +197,46 @@ async function resolverAlerta(id) {
   if (error) { toast('No se pudo resolver: ' + error.message, 'error'); return; }
   toast('Alerta resuelta');
   cargarAlertas();
+}
+
+async function cargarIncidencias() {
+  const list = document.getElementById('incidenciasList');
+  const { data, error } = await supabaseClient
+    .from('plan_items')
+    .select('id, incidencia_tipo, incidencia_nota, incidencia_at, recetas(nombre), planes_produccion(nombre, fecha_planificada), perfiles!plan_items_incidencia_por_fkey(nombre)')
+    .not('incidencia_tipo', 'is', null)
+    .order('incidencia_at', { ascending: false })
+    .limit(50);
+
+  if (error) {
+    list.innerHTML = `<div class="empty-state" style="padding:10px;">Error al cargar notas: ${escapeHtml(error.message)}</div>`;
+    return;
+  }
+  if (!data.length) {
+    list.innerHTML = `<div class="empty-state" style="padding:10px;">✓ Sin notas pendientes. Aquí aparecerán los productos cancelados o perdidos que se reporten desde el plan de producción.</div>`;
+    return;
+  }
+
+  list.innerHTML = data.map(n => `
+    <div class="alert-item alert-advertencia">
+      <div class="alert-icon">${n.incidencia_tipo === 'cancelado' ? '🚫' : '💥'}</div>
+      <div class="alert-body">
+        <span class="alert-nivel">${n.incidencia_tipo === 'cancelado' ? '1 · Cancelado' : '2 · Pérdida'}</span>
+        · ${escapeHtml(n.recetas?.nombre || 'Producto')}
+        <div class="alert-meta">${escapeHtml(n.planes_produccion?.nombre || 'Plan')} · ${escapeHtml(n.planes_produccion?.fecha_planificada || '')} · ${escapeHtml(n.perfiles?.nombre || '')} · ${formatearFecha(n.incidencia_at)}</div>
+        <div style="margin-top:6px;">${escapeHtml(n.incidencia_nota)}</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="borrarIncidencia('${n.id}')">Borrar nota</button>
+    </div>
+  `).join('');
+}
+
+async function borrarIncidencia(id) {
+  if (!window.confirm('¿Borrar esta nota? La acción quedará registrada en los logs.')) return;
+  const { error } = await supabaseClient.rpc('borrar_incidencia_item', { p_item_id: id });
+  if (error) { toast('No se pudo borrar: ' + error.message, 'error'); return; }
+  toast('Nota borrada');
+  cargarIncidencias();
 }
 
 function formatearFecha(iso) {

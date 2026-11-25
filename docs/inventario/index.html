@@ -138,6 +138,34 @@
   </div>
 </div>
 
+<!-- ── MODAL: RETIRAR PRODUCTO DE EXHIBICIÓN ── -->
+<div class="modal-backdrop" id="modalRetiro" style="display:none;">
+  <div class="modal-card">
+    <button type="button" class="modal-close" id="btnCerrarModalRetiro">✕</button>
+    <div class="section-title" style="padding-top:0;">Retirar producto de exhibición</div>
+    <p class="hint" id="retiroProductoTexto"></p>
+    <form id="formRetiro">
+      <div class="field">
+        <label>¿Por qué se retira?</label>
+        <select id="retiroMotivo" required>
+          <option value="vendido">1 · Vendido</option>
+          <option value="perdida_danado">2 · Pérdida — el producto se dañó</option>
+          <option value="perdida_exhibicion">3 · Pérdida — pasó el tiempo en exhibición</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Nota (opcional)</label>
+        <textarea id="retiroNota" rows="2" placeholder="Ej: se cayó la bandeja, mancha en el glaseado, etc."></textarea>
+      </div>
+      <div class="hint" id="retiroInfo"></div>
+      <div class="flex gap-8 mt-16">
+        <button type="submit" class="btn btn-primary">Confirmar retiro</button>
+        <button type="button" class="btn btn-outline" id="btnCancelarRetiro">Cancelar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- ── MODAL: ENVIAR A OTRA SEDE ── -->
 <div class="modal-backdrop" id="modalEnvio" style="display:none;">
   <div class="modal-card">
@@ -297,7 +325,7 @@ function renderLotes() {
       <td>${l.fecha_ingreso}</td>
       <td>${dias} día(s) <span class="hint">(umbral ${umbral})</span></td>
       <td>${badge}</td>
-      <td>${PUEDE_ESCRIBIR ? `<button class="btn btn-outline btn-sm" onclick="retirarLote('${l.id}')">Retirar</button>` : ''}</td>
+      <td>${PUEDE_ESCRIBIR ? `<button class="btn btn-outline btn-sm" onclick="abrirModalRetiro('${l.id}')">Retirar</button>` : ''}</td>
       <td>${PUEDE_ESCRIBIR ? `<button class="btn btn-outline btn-sm" onclick="abrirModalEnvio('${l.id}')">Enviar</button>` : ''}</td>
     </tr>`;
   }).join('');
@@ -328,13 +356,74 @@ document.getElementById('formLote').addEventListener('submit', async (e) => {
   await cargarLotes();
 });
 
-async function retirarLote(id) {
-  const { error } = await supabaseClient
-    .from('lotes').update({ retirado_at: new Date().toISOString(), motivo_retiro: 'vendido' }).eq('id', id);
-  if (error) { toast('No se pudo retirar: ' + error.message, 'error'); return; }
-  toast('Lote retirado de exhibición');
-  await cargarLotes();
+/* ── RETIRAR PRODUCTO (venta o pérdida) ── */
+
+let LOTE_RETIRO = null;
+const DIAS_EXHIBICION_PERDIDA = 3;
+
+function abrirModalRetiro(loteId) {
+  const lote = LOTES.find(l => l.id === loteId);
+  if (!lote) return;
+  LOTE_RETIRO = lote;
+  const dias = Math.floor((Date.now() - new Date(lote.fecha_ingreso + 'T00:00:00').getTime()) / 86400000);
+  const umbral = Number(lote.recetas?.dias_alerta_exhibicion || DIAS_EXHIBICION_PERDIDA);
+  document.getElementById('retiroProductoTexto').textContent =
+    `${lote.recetas?.nombre || 'Producto'} · ${lote.cantidad} und. · ${lote.sede === 'Orinokia' ? 'CC Orinokia' : 'Villa Alianza'} · ` +
+    `fabricado el ${lote.fecha_ingreso}`;
+  document.getElementById('retiroInfo').textContent =
+    dias > umbral
+      ? `Lleva ${dias} día(s) en exhibición (más de ${umbral}): se sugiere marcarlo como pérdida por tiempo.`
+      : `Lleva ${dias} día(s) en exhibición (umbral ${umbral}). El reporte contará como pérdida si eliges daño o tiempo.`;
+  document.getElementById('retiroMotivo').value = 'vendido';
+  document.getElementById('retiroNota').value = '';
+  document.getElementById('modalRetiro').style.display = 'flex';
 }
+
+function cerrarModalRetiro() {
+  document.getElementById('modalRetiro').style.display = 'none';
+  LOTE_RETIRO = null;
+}
+document.getElementById('btnCancelarRetiro').addEventListener('click', cerrarModalRetiro);
+document.getElementById('btnCerrarModalRetiro').addEventListener('click', cerrarModalRetiro);
+document.getElementById('modalRetiro').addEventListener('click', (e) => {
+  if (e.target.id === 'modalRetiro') cerrarModalRetiro();
+});
+document.getElementById('retiroMotivo').addEventListener('change', (e) => {
+  if (e.target.value === 'perdida_exhibicion' && !document.getElementById('retiroNota').value.trim()) {
+    const umbral = Number(LOTE_RETIRO?.recetas?.dias_alerta_exhibicion || DIAS_EXHIBICION_PERDIDA);
+    document.getElementById('retiroNota').value = `Más de ${umbral} días en exhibición`;
+  }
+});
+
+document.getElementById('formRetiro').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!LOTE_RETIRO) return;
+  const motivo = document.getElementById('retiroMotivo').value;
+  const nota = document.getElementById('retiroNota').value.trim();
+  const etiqueta = {
+    vendido: 'Vendido',
+    perdida_danado: 'Pérdida por daño',
+    perdida_exhibicion: 'Pérdida por tiempo en exhibición',
+  }[motivo];
+
+  const ok = window.confirm(`¿Confirmar retiro como "${etiqueta}"?\n\n` +
+    (motivo === 'vendido'
+      ? 'Se contará como venta en los reportes.'
+      : 'Se contará como pérdida en los reportes.') +
+    (nota ? `\n\nNota: ${nota}` : ''));
+  if (!ok) return;
+
+  const { error } = await supabaseClient
+    .from('lotes').update({
+      retirado_at: new Date().toISOString(),
+      motivo_retiro: motivo,
+      retiro_nota: nota || null,
+    }).eq('id', LOTE_RETIRO.id);
+  if (error) { toast('No se pudo retirar: ' + error.message, 'error'); return; }
+  cerrarModalRetiro();
+  toast(`Retirado como ${etiqueta.toLowerCase()}`);
+  await cargarLotes();
+});
 
 /* ── ENVIAR PRODUCTO A OTRA SEDE ── */
 

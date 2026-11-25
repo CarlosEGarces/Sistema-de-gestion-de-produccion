@@ -21,6 +21,9 @@
 .pedido-mini { background:#fff; border-radius:12px; box-shadow:var(--shadow); padding:10px 14px; margin-bottom:8px; border-left:4px solid var(--pink); display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
 .pedido-mini.vinculado { border-left-color:var(--green); opacity:.75; }
 .tag-pedido { display:inline-block; background:var(--pink-pale); color:var(--pink-dark); font-size:10px; font-weight:700; text-transform:uppercase; padding:2px 8px; border-radius:8px; margin-top:2px; }
+.badge-incidencia { background:#FFF0E6; color:#A24B00; }
+.nota-incidencia { font-size:11px; color:#8A5000; max-width:220px; margin-top:4px; white-space:pre-wrap; }
+.acciones-item { display:flex; flex-direction:column; gap:4px; align-items:flex-end; }
 </style>
 </head>
 <body>
@@ -133,6 +136,32 @@
     </div>
   </div>
 
+  <!-- ── MODAL: INCIDENCIA DE CARGA ── -->
+  <div class="modal-backdrop" id="modalIncidencia" style="display:none;">
+    <div class="modal-card">
+      <button type="button" class="modal-close" id="btnCerrarIncidencia">✕</button>
+      <div class="section-title" style="padding-top:0;">¿Por qué no se cargó?</div>
+      <div class="hint" id="incidenciaProducto"></div>
+      <form id="formIncidencia" class="mt-8">
+        <div class="field">
+          <label>Motivo</label>
+          <select id="incidenciaTipo" required>
+            <option value="cancelado">1 · Cancelado</option>
+            <option value="perdida">2 · Pérdida</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Nota (obligatoria)</label>
+          <textarea id="incidenciaNota" rows="3" required placeholder="Ej: se quemó el bizcocho, cancelado por pedido del cliente..."></textarea>
+        </div>
+        <div class="flex gap-8 mt-16">
+          <button type="submit" class="btn btn-primary">Guardar nota</button>
+          <button type="button" class="btn btn-outline" id="btnCancelarIncidencia">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="table-wrap mt-16">
     <table>
       <thead><tr>
@@ -152,6 +181,8 @@ const ESTADO_LABEL = { planificado: 'Planificado', en_proceso: 'En proceso', com
 const params = new URLSearchParams(location.search);
 const PLAN_ID = params.get('id');
 let PUEDE_ESCRIBIR = false;
+let ES_ADMIN = false;
+let ITEM_INCIDENCIA = null;
 let SESSION = null;
 let PLAN = null;
 let ITEMS = [];
@@ -167,6 +198,7 @@ async function init() {
     return;
   }
   PUEDE_ESCRIBIR = tieneRol(ctx.perfil, ['administrador', 'produccion']);
+  ES_ADMIN = ctx.perfil.rol === 'administrador';
   const { data: { session } } = await supabaseClient.auth.getSession();
   SESSION = session;
 
@@ -287,7 +319,7 @@ async function agregarPedidoAlPlan(pedidoId, pedido) {
 async function cargarItems() {
   const { data, error } = await supabaseClient
     .from('plan_items')
-    .select('id, receta_id, pedido_id, cantidad_planificada, cantidad_producida, sede, cargado_a_inventario, recetas(nombre), pedidos(clientes(nombre))')
+    .select('id, receta_id, pedido_id, cantidad_planificada, cantidad_producida, sede, cargado_a_inventario, incidencia_tipo, incidencia_nota, incidencia_at, recetas(nombre), pedidos(clientes(nombre)), perfiles!plan_items_incidencia_por_fkey(nombre)')
     .eq('plan_id', PLAN_ID)
     .order('created_at');
 
@@ -329,6 +361,22 @@ function renderItems() {
   tbody.innerHTML = ITEMS.map(it => {
     const enInventario = STOCK_PRODUCTO[`${it.receta_id}|${it.sede}`] || 0;
     const aProducir = Math.max(it.cantidad_planificada - enInventario, 0);
+    const conIncidencia = !!it.incidencia_tipo;
+    const estado = it.cargado_a_inventario
+      ? '<span class="badge badge-ok">Cargado ✓</span>'
+      : conIncidencia
+        ? `<span class="badge badge-incidencia">${it.incidencia_tipo === 'cancelado' ? '1 · Cancelado' : '2 · Pérdida'}</span>
+           <div class="nota-incidencia">${escapeHtml(it.incidencia_nota)}</div>
+           <div class="hint">${escapeHtml(it.perfiles?.nombre || '')} · ${formatearFechaCorta(it.incidencia_at)}</div>`
+        : '<span class="badge badge-off">Pendiente</span>';
+    const acciones = [];
+    if (!it.cargado_a_inventario && conIncidencia && ES_ADMIN) {
+      acciones.push(`<button class="btn btn-outline btn-sm borrar-nota-btn" data-id="${it.id}">🗑 Borrar nota</button>`);
+    }
+    if (!it.cargado_a_inventario && !conIncidencia && PUEDE_ESCRIBIR) {
+      acciones.push(`<button class="btn btn-primary btn-sm cargar-item-btn" data-id="${it.id}">→ Cargar</button>`);
+      acciones.push(`<button class="btn btn-outline btn-sm incidencia-btn" data-id="${it.id}">⚠ No cargar</button>`);
+    }
     return `
     <tr>
       <td class="wrap">${escapeHtml(it.recetas?.nombre || '—')}
@@ -338,16 +386,12 @@ function renderItems() {
       <td>${enInventario}</td>
       <td><strong>${aProducir}</strong></td>
       <td>
-        ${PUEDE_ESCRIBIR && !it.cargado_a_inventario
+        ${PUEDE_ESCRIBIR && !it.cargado_a_inventario && !conIncidencia
           ? `<input type="number" min="0" step="1" class="mini-input producido-input" data-id="${it.id}" value="${it.cantidad_producida ?? ''}" placeholder="${aProducir}">`
           : (it.cantidad_producida ?? '—')}
       </td>
-      <td>${it.cargado_a_inventario
-          ? '<span class="badge badge-ok">Cargado ✓</span>'
-          : '<span class="badge badge-off">Pendiente</span>'}</td>
-      <td>${PUEDE_ESCRIBIR && !it.cargado_a_inventario
-          ? `<button class="btn btn-outline btn-sm cargar-item-btn" data-id="${it.id}">→ Cargar</button>`
-          : ''}</td>
+      <td>${estado}</td>
+      <td><div class="acciones-item">${acciones.join('')}</div></td>
     </tr>`;
   }).join('');
 
@@ -365,6 +409,16 @@ function renderItems() {
   tbody.querySelectorAll('.cargar-item-btn').forEach(b => {
     b.addEventListener('click', () => cargarItemAInventario(b.dataset.id));
   });
+  tbody.querySelectorAll('.incidencia-btn').forEach(b => {
+    b.addEventListener('click', () => abrirModalIncidencia(b.dataset.id));
+  });
+  tbody.querySelectorAll('.borrar-nota-btn').forEach(b => {
+    b.addEventListener('click', () => borrarNotaIncidencia(b.dataset.id));
+  });
+}
+
+function formatearFechaCorta(iso) {
+  return iso ? new Date(iso).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' }) : '';
 }
 
 async function cargarItemAInventario(itemId) {
@@ -373,48 +427,85 @@ async function cargarItemAInventario(itemId) {
   const cantidad = item.cantidad_producida ?? item.cantidad_planificada;
   if (!cantidad || cantidad <= 0) { toast('La cantidad debe ser mayor a 0 para cargar a inventario', 'error'); return; }
 
-  const { data: lote, error: errLote } = await supabaseClient.from('lotes').insert({
-    receta_id: item.receta_id,
-    cantidad,
-    sede: item.sede,
-    fecha_ingreso: new Date().toISOString().slice(0, 10),
-    created_by: SESSION.user.id,
-  }).select('id').single();
-  if (errLote) { toast('No se pudo crear el lote: ' + errLote.message, 'error'); return; }
+  const { error } = await supabaseClient.rpc('confirmar_item_produccion', { p_item_id: itemId });
+  if (error) { toast('No se pudo confirmar: ' + error.message, 'error'); return; }
 
-  const { error: errItem } = await supabaseClient.from('plan_items')
-    .update({ cargado_a_inventario: true, lote_id: lote.id }).eq('id', itemId);
-  if (errItem) { toast('Lote creado, pero no se pudo marcar el ítem: ' + errItem.message, 'error'); return; }
-
-  toast('Cargado a Inventario');
+  toast('Producción confirmada: se creó el lote y se descontaron los ingredientes');
   await cargarItems();
 }
 
 document.getElementById('btnCargarTodo').addEventListener('click', async () => {
-  const pendientes = ITEMS.filter(i => !i.cargado_a_inventario && (i.cantidad_producida ?? i.cantidad_planificada) > 0);
+  const pendientes = ITEMS.filter(i => !i.cargado_a_inventario && !i.incidencia_tipo &&
+    (i.cantidad_producida ?? i.cantidad_planificada) > 0);
   if (!pendientes.length) { toast('No hay ítems pendientes por cargar'); return; }
 
   const ok = window.confirm(
-    `Vas a crear ${pendientes.length} lote(s) nuevo(s) en Inventario, uno por cada receta pendiente ` +
-    `(usando la cantidad producida, o la planificada si no la definiste).\n\n¿Continuar?`
+    `Vas a confirmar ${pendientes.length} producto(s). Se crearán los lotes y se descontarán ` +
+    `de Inventario los ingredientes usados en cada receta (cantidad producida × receta).\n\n¿Continuar?`
   );
   if (!ok) return;
 
-  let fallos = 0;
-  for (const it of pendientes) {
-    const cantidad = it.cantidad_producida ?? it.cantidad_planificada;
-    const { data: lote, error: errLote } = await supabaseClient.from('lotes').insert({
-      receta_id: it.receta_id, cantidad, sede: it.sede,
-      fecha_ingreso: new Date().toISOString().slice(0, 10), created_by: SESSION.user.id,
-    }).select('id').single();
-    if (errLote) { fallos++; continue; }
-    const { error: errItem } = await supabaseClient.from('plan_items')
-      .update({ cargado_a_inventario: true, lote_id: lote.id }).eq('id', it.id);
-    if (errItem) fallos++;
+  const btn = document.getElementById('btnCargarTodo');
+  btn.disabled = true;
+  btn.textContent = 'Confirmando...';
+  try {
+    const { data: total, error } = await supabaseClient.rpc('confirmar_plan_produccion', { p_plan_id: PLAN_ID });
+    if (error) throw error;
+    toast(`${total} producto(s) confirmado(s). Ingredientes descontados de Inventario`);
+    await cargarItems();
+  } catch (err) {
+    toast('No se pudo confirmar: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Cargar pendientes a Inventario';
   }
-  toast(fallos ? `${fallos} error(es); el resto se cargó` : `${pendientes.length} lote(s) creados en Inventario`, fallos ? 'error' : 'ok');
+});
+
+/* ── INCIDENCIAS DE CARGA ── */
+
+function abrirModalIncidencia(itemId) {
+  const item = ITEMS.find(i => i.id === itemId);
+  if (!item) return;
+  ITEM_INCIDENCIA = item;
+  document.getElementById('incidenciaProducto').textContent =
+    `${item.recetas?.nombre || 'Receta'} · ${item.sede} · ${item.cantidad_planificada} planificado(s)`;
+  document.getElementById('formIncidencia').reset();
+  document.getElementById('modalIncidencia').style.display = 'flex';
+}
+
+function cerrarModalIncidencia() {
+  document.getElementById('modalIncidencia').style.display = 'none';
+  ITEM_INCIDENCIA = null;
+}
+document.getElementById('btnCerrarIncidencia').addEventListener('click', cerrarModalIncidencia);
+document.getElementById('btnCancelarIncidencia').addEventListener('click', cerrarModalIncidencia);
+document.getElementById('modalIncidencia').addEventListener('click', (e) => {
+  if (e.target.id === 'modalIncidencia') cerrarModalIncidencia();
+});
+
+document.getElementById('formIncidencia').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!ITEM_INCIDENCIA) return;
+  const tipo = document.getElementById('incidenciaTipo').value;
+  const nota = document.getElementById('incidenciaNota').value.trim();
+  if (!nota) { toast('Escribe la nota del motivo', 'error'); return; }
+
+  const { error } = await supabaseClient.rpc('registrar_incidencia_item', {
+    p_item_id: ITEM_INCIDENCIA.id, p_tipo: tipo, p_nota: nota
+  });
+  if (error) { toast('No se pudo guardar: ' + error.message, 'error'); return; }
+  cerrarModalIncidencia();
+  toast('Nota registrada. El administrador podrá verla y borrarla desde el inicio.');
   await cargarItems();
 });
+
+async function borrarNotaIncidencia(itemId) {
+  if (!window.confirm('¿Borrar esta nota? La acción quedará registrada en los logs.')) return;
+  const { error } = await supabaseClient.rpc('borrar_incidencia_item', { p_item_id: itemId });
+  if (error) { toast('No se pudo borrar: ' + error.message, 'error'); return; }
+  toast('Nota borrada');
+  await cargarItems();
+}
 
 document.getElementById('btnNuevoItem').addEventListener('click', () => {
   document.getElementById('formItemPanel').style.display = '';

@@ -141,6 +141,38 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+let _soportaSubrecetas = null;
+
+/**
+ * true si la BD ya tiene la columna detalle_receta.subreceta_id (ver migración
+ * docs/migrations/subrecetas.sql). Se cached por página para no repetir la consulta.
+ */
+async function soportaSubrecetas() {
+  if (_soportaSubrecetas === null) {
+    const { error } = await supabaseClient.from('detalle_receta').select('subreceta_id').limit(1);
+    _soportaSubrecetas = !error;
+    if (error) console.warn('Sub-recetas no disponibles hasta ejecutar la migración:', error.message);
+  }
+  return _soportaSubrecetas;
+}
+
+let _soportaSeccionFactor = null;
+
+/** true si detalle_receta.seccion_factor existe (factor de uso por sub-sección). */
+async function soportaSeccionFactor() {
+  if (_soportaSeccionFactor === null) {
+    const { error } = await supabaseClient.from('detalle_receta').select('seccion_factor').limit(1);
+    _soportaSeccionFactor = !error;
+  }
+  return _soportaSeccionFactor;
+}
+
+/** Mapa id -> receta (nombre, costo_base) para resolver sub-recetas en el navegador. */
+async function mapaRecetas() {
+  const { data } = await supabaseClient.from('recetas').select('id, nombre, costo_base');
+  return new Map((data || []).map(r => [r.id, r]));
+}
+
 /**
  * Fuerza un refresco inmediato de la tasa BCV llamando la misma Edge Function que
  * dispara el cron diario. Devuelve la fila actualizada de `tasa_cambio`, o lanza error.

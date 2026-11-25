@@ -50,7 +50,10 @@
 <div class="container">
   <div class="flex-between no-print">
     <a href="index.html" class="btn btn-outline btn-sm">← Recetas</a>
-    <button class="btn btn-primary btn-sm" id="btnImprimir" onclick="window.print()">🖨 Imprimir / Guardar PDF</button>
+    <div class="flex gap-8">
+      <a href="#" class="btn btn-primary btn-sm" id="btnEditar" style="display:none;">✎ Editar receta</a>
+      <button class="btn btn-outline btn-sm" id="btnImprimir" onclick="window.print()">🖨 Imprimir / Guardar PDF</button>
+    </div>
   </div>
 
   <div class="panel mt-16 ficha" id="fichaContenido">
@@ -64,6 +67,10 @@ const CATEGORIA_LABEL = { racion: 'Ración', torta_entera: 'Torta Entera', bebid
 const params = new URLSearchParams(location.search);
 const RECETA_ID = params.get('id');
 let VER_DINERO = true;
+let PUEDE_ESCRIBIR = false;
+let RECETAS_MAPA = new Map();
+let CON_SUBRECETAS = false;
+let CON_FACTOR = false;
 
 async function init() {
   const ctx = await requireSession();
@@ -74,7 +81,13 @@ async function init() {
     return;
   }
   VER_DINERO = ctx.perfil.rol !== 'trabajador';
+  PUEDE_ESCRIBIR = tieneRol(ctx.perfil, ['administrador', 'produccion']);
   document.getElementById('btnImprimir').style.display = VER_DINERO ? '' : 'none';
+  if (PUEDE_ESCRIBIR && RECETA_ID) {
+    const btn = document.getElementById('btnEditar');
+    btn.href = 'receta_form.html?id=' + RECETA_ID;
+    btn.style.display = '';
+  }
 
   if (!RECETA_ID) {
     document.getElementById('fichaContenido').innerHTML = '<div class="empty-state">Falta el id de la receta.</div>';
@@ -87,11 +100,18 @@ async function init() {
     return;
   }
 
+  CON_SUBRECETAS = await soportaSubrecetas();
+  CON_FACTOR = await soportaSeccionFactor();
+  const campos = 'cantidad, seccion, es_empaque' +
+    (CON_SUBRECETAS ? ', subreceta_id' : '') +
+    (CON_FACTOR ? ', seccion_factor' : '') +
+    ', ingredientes ( nombre, unidad_medida, costo_unitario )';
   const { data: detalle } = await supabaseClient
     .from('detalle_receta')
-    .select('cantidad, seccion, es_empaque, ingredientes ( nombre, unidad_medida, costo_unitario )')
+    .select(campos)
     .eq('receta_id', RECETA_ID);
 
+  if (CON_SUBRECETAS) RECETAS_MAPA = await mapaRecetas();
   renderFicha(receta, detalle || []);
 }
 
@@ -106,17 +126,33 @@ function renderFicha(receta, detalle) {
   }
 
   const secciones = [...grupos.entries()].map(([seccion, items]) => {
-    const subtotal = items.reduce((s, d) => s + d.cantidad * d.ingredientes.costo_unitario, 0);
-    const filas = items.map(d => `
+    const factor = CON_FACTOR ? (Number(items[0]?.seccion_factor) || 1) : 1;
+    let subtotal = 0;
+    const filas = items.map(d => {
+      const esSub = CON_SUBRECETAS && !!d.subreceta_id;
+      const sub = esSub ? RECETAS_MAPA.get(d.subreceta_id) : null;
+      const nombre = esSub
+        ? `Sub-receta: ${escapeHtml(sub?.nombre || 'receta no encontrada')}`
+        : escapeHtml(d.ingredientes?.nombre || '—');
+      const unidad = esSub ? 'veces receta base' : escapeHtml(d.ingredientes?.unidad_medida || '');
+      const unitario = esSub ? Number(sub?.costo_base || 0) : Number(d.ingredientes?.costo_unitario || 0);
+      const costo = Number(d.cantidad) * unitario * factor;
+      subtotal += costo;
+      return `
       <tr>
-        <td class="wrap">${escapeHtml(d.ingredientes.nombre)}${d.es_empaque ? ' <span class="hint">(empaque)</span>' : ''}</td>
-        <td>${d.cantidad} ${escapeHtml(d.ingredientes.unidad_medida)}</td>
-        ${VER_DINERO ? `<td>$${(d.cantidad * d.ingredientes.costo_unitario).toFixed(2)}</td>` : ''}
-      </tr>
-    `).join('');
+        <td class="wrap">${nombre}${d.es_empaque && !esSub ? ' <span class="hint">(empaque)</span>' : ''}
+          ${esSub && sub ? `<br><a class="hint" href="ficha_tecnica.html?id=${sub.id}">Ver ficha de la sub-receta ↗</a>` : ''}
+        </td>
+        <td>${d.cantidad} ${unidad}</td>
+        ${VER_DINERO ? `<td>$${costo.toFixed(2)}</td>` : ''}
+      </tr>`;
+    }).join('');
     return `
       <div class="seccion-receta">
-        <div class="seccion-titulo">${escapeHtml(seccion)}${VER_DINERO ? ` <span class="hint">— subtotal $${subtotal.toFixed(2)}</span>` : ''}</div>
+        <div class="seccion-titulo">${escapeHtml(seccion)}
+          <span class="hint">— usado ×${factor}</span>
+          ${VER_DINERO ? `<span class="hint">· subtotal $${subtotal.toFixed(2)}</span>` : ''}
+        </div>
         <table>
           <thead><tr><th>Ingrediente</th><th>Cantidad</th>${VER_DINERO ? '<th>Costo</th>' : ''}</tr></thead>
           <tbody>${filas}</tbody>
